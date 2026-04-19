@@ -19,4 +19,4 @@
 # vendor/
 
 # Go workspace file
-go.workflashdb
+flashdb
