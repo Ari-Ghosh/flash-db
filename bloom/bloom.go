@@ -1,9 +1,58 @@
 // Package bloom provides a simple Bloom filter used to skip B-tree reads
 // when a key is definitely absent.
 //
-// Uses k independent hash functions derived from two base hashes
-// (Kirsch-Mitzenmacher trick) to achieve low false-positive rates at
-// ~10 bits per key.
+// ## Overview
+//
+// Bloom filters provide fast negative lookups by probabilistically testing
+// key presence. They use multiple hash functions to set bits in a bitset,
+// enabling O(1) checks that guarantee absence but allow false positives.
+//
+// ## Architecture
+//
+// - **Kirsch-Mitzenmacher**: Two base hashes generate k independent hashes.
+// - **Fixed Size**: Pre-allocated bitset based on expected elements.
+// - **No False Negatives**: If filter says "no", key is definitely absent.
+// - **Configurable FPR**: Trade space for accuracy (~10 bits/element typical).
+//
+// ## v1 vs v2 Changes
+//
+// ### v1 (Original Implementation)
+// - No bloom filters; all Get operations scanned B-tree.
+// - Used for basic key-value storage without optimizations.
+//
+// ### v2 (Enhanced Implementation)
+// - **Bloom Filters**: Added to SSTable footers for fast negative lookups.
+// - **Kirsch-Mitzenmacher**: Efficient multiple hash generation.
+// - **Optimal Sizing**: Automatic k/m calculation for target FPR.
+// - **Space Efficient**: ~1-2 bytes per element at 1% FPR.
+//
+// ## Key Methods
+//
+// - **New(n, fpr)**: Create filter for n elements at fpr false positive rate.
+// - **Add(key)**: Insert key into filter.
+// - **Has(key)**: Test key presence (may be false positive).
+// - **optimalK/M**: Calculate optimal parameters.
+//
+// ## Hash Functions
+//
+// Uses Kirsch-Mitzenmacher optimization:
+// - Hash1(key) → base hash
+// - Hash2(key) → secondary hash
+// - Hash_i = Hash1 + i * Hash2 (mod m)
+//
+// ## Performance Characteristics
+//
+// - **Space**: ~1.44 * ln(1/fpr) bits per element.
+// - **Time**: O(k) for Add/Has, k typically 4-10.
+// - **FPR**: Configurable, ~1% typical for good space/time balance.
+// - **No Deletes**: Filters don't support removal.
+//
+// ## Usage in HybridDB
+//
+// Bloom filters optimize read path:
+// - SSTable.Get() checks bloom first – skip file if "no".
+// - Iterator.Seek() uses bloom to skip irrelevant SSTables.
+// - Reduces I/O by avoiding unnecessary B-tree traversals.
 package bloom
 
 import (

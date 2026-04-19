@@ -4,12 +4,15 @@ A high-performance hybrid database engine combining **LSM (Log-Structured Merge)
 
 ## Overview
 
-FlashDB implements a production-grade key-value store architecture that optimizes both write throughput and read latency:
+FlashDB v2 implements a production-grade key-value store architecture that optimizes both write throughput and read latency with advanced features:
 
-- **Write Path**: WAL → MemTable (skip list) → SSTable (L0 files) → Compaction
-- **Read Path**: MemTable → B-tree (bulk-loaded from compacted data)
+- **Write Path**: WAL (group-commit) → MemTable (skip list) → SSTable (L0 files) → Tiered Compaction (L0→L1→L2)
+- **Read Path**: MemTable → L1 B-tree → L2 B-tree
+- **MVCC Snapshots**: Point-in-time consistent reads
+- **Range Iterators**: Forward and reverse scans over key ranges
 - **Crash Recovery**: Write-Ahead Log (WAL) with replay on startup
 - **Bloom Filters**: Fast negative lookups for absent keys
+- **Compression**: Configurable block compression for SSTables
 
 ## Architecture
 
@@ -18,8 +21,8 @@ FlashDB implements a production-grade key-value store architecture that optimize
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                      Public API                         │
-│              db.Put(k,v) | db.Get(k)                    │
-│              db.Delete(k) | db.Close()                  │
+│         db.Put(k,v) | db.Get(k) | db.Delete(k)          │
+│     db.NewSnapshot() | db.NewIterator(opts)            │
 └────────────────┬────────────────────────────────────────┘
                  │
     ┌────────────┼────────────┐
@@ -27,7 +30,7 @@ FlashDB implements a production-grade key-value store architecture that optimize
     v            v            v
   WAL       MemTable      Immutable
   Log      (Skip List)    MemTable
- (Write)                 (Flushing)
+(Write)                 (Flushing)
     │            │            │
     │            └─────┬──────┘
     │                  │ (flush when full)
@@ -38,35 +41,46 @@ FlashDB implements a production-grade key-value store architecture that optimize
                    (Sorted)         Engine
                        │                 │
                        └─────────┬───────┘
-                                 │ (k-way merge)
+                                 │ (incremental, tiered)
                                  v
-                            B-Tree Pages
-                         (Page-based store)
+                    ┌────────────┴────────────┐
+                    │                         │
+                    v                         v
+                 L1 B-tree                 L2 B-tree
+            (Recent Compacted)        (Long-term Storage)
+                    │                         │
+                    └────────────┬────────────┘
                                  │
                                  v
                             Read Queries
+                         (Merged Iterator)
 ```
 
 ### Write Path (LSM-style)
 
-1. **WAL (Write-Ahead Log)**: Every write is immediately persisted as a log entry before touching in-memory structures
+1. **WAL (Write-Ahead Log)**: Every write is immediately persisted as a log entry before touching in-memory structures (group-commit for throughput)
 2. **MemTable**: Writes go into an in-memory skip list sorted by key
 3. **Flush**: When MemTable reaches size threshold, it's rotated to immutable and flushed to disk as an SSTable (L0 file)
-4. **Compaction**: Multiple L0 SSTables are k-way merged into the B-tree via bulk-load
+4. **Compaction**: Multiple L0 SSTables are incrementally merged into L1 B-tree; L1 promotes to L2 when size threshold exceeded
 
-### Read Path (B-tree optimized)
+### Read Path (Tiered B-tree optimized)
 
 1. **Active MemTable**: Check newest in-memory writes first (highest priority)
 2. **Immutable MemTable**: Check data being flushed
-3. **B-tree**: Check durable, compacted data via binary search through pages
+3. **L1 B-tree**: Check recently compacted data via binary search through pages
+4. **L2 B-tree**: Check long-term storage data via binary search through pages
 
 ### Key Features
 
 - **Versioning**: Every entry has a monotonically increasing sequence number; highest version wins
 - **Tombstones**: Deletions are marked with a tombstone flag; separate lifecycle from puts
+- **MVCC Snapshots**: Point-in-time consistent reads via `db.NewSnapshot()`
+- **Range Iterators**: Forward/reverse scans with `db.NewIterator(opts)`
 - **Thread-Safe**: All components use appropriate synchronization (mutexes, atomic operations)
 - **Crash Recovery**: WAL replay restores in-memory state on startup
 - **Bloom Filters**: Negative lookups are fast (SSTable files include Bloom filters)
+- **Tiered Compaction**: Incremental L0→L1→L2 merging avoids full rebuilds
+- **Compression**: Configurable block compression for SSTables
 
 ## Building & Running
 
@@ -89,6 +103,8 @@ go run main.go
 
 The `main.go` demonstrates:
 - Basic put/get/delete operations
+- MVCC snapshots for point-in-time reads
+- Range iterators (forward and reverse scans)
 - Overwrites and tombstones
 - Bulk writes to trigger flush and compaction
 - Reading after compaction
@@ -101,11 +117,18 @@ The `main.go` demonstrates:
 ── Basic put / get ──────────────────────────────
 user:alice  →  {"age":30,"city":"Pune"}  (err=<nil>)
 
-── Overwrite ────────────────────────────────────
-user:alice  →  {"age":31,"city":"Pune"}  (err=<nil>)
+── MVCC Snapshot ────────────────────────────────
+user:alice via snapshot (age=30 expected) → {"age":30,"city":"Pune"} (err=<nil>)
+user:alice latest (age=31 expected)       → {"age":31,"city":"Pune"}
 
 ── Delete / tombstone ───────────────────────────
-user:bob    →  ""  (err=key deleted)
+user:bob  →  ""  (err=key deleted)
+
+── Range scan (iterator) ────────────────────────
+range [kv:aaa, kv:ddd) → kv:aaa=1 kv:bbb=2 kv:ccc=3 
+
+── Reverse scan ─────────────────────────────────
+reverse [kv:aaa, kv:eee) → kv:ddd=4 kv:ccc=3 kv:bbb=2 kv:aaa=1 
 
 ── Bulk writes to trigger flush + compaction ────
 
@@ -120,12 +143,12 @@ user:bob    →  ""  (err=key deleted)
   L0 file count    : 0
   Sequence number  : 5003
 
-── Reopen (crash recovery via WAL) ──────────────
-user:carol (after reopen)  →  {"age":27,"city":"Delhi"}  (err=<nil>)
-user:bob   (after reopen)  →  ""  (err=key deleted, should be ErrKeyDeleted)
+── Crash recovery via WAL ───────────────────────
+user:carol (after reopen) → {"age":27,"city":"Delhi"} (err=<nil>)
+user:bob   (after reopen) → "" (err=key deleted)
+```
 
 Done.
-```
 
 ## API Reference
 
@@ -143,9 +166,12 @@ defer db.Close()
 
 ```go
 type Config struct {
-    Dir                string  // Directory for all database files
-    MemTableSize       int64   // Flush threshold (default 64 MB)
-    L0CompactThreshold int     // Trigger compaction after N L0 files (default 4)
+    Dir                string        // Directory for all database files
+    MemTableSize       int64         // Flush threshold (default 64 MB)
+    L0CompactThreshold int           // Trigger compaction after N L0 files (default 4)
+    L1SizeThreshold    int64         // Promote L1 to L2 when size exceeded (default 256 MB)
+    WALSyncPolicy      wal.SyncPolicy // WAL durability vs throughput (default SyncBatch)
+    Codec              hybriddb.Codec // Block compression for SSTables (default None)
 }
 ```
 
@@ -162,7 +188,11 @@ err := db.Delete([]byte("key"))
 ### Reading Data
 
 ```go
+// Get latest value
 val, err := db.Get([]byte("key"))
+
+// Get value at specific sequence number
+val, err := db.GetAt([]byte("key"), seqNum)
 if err == hybriddb.ErrKeyNotFound {
     // Key does not exist
 }
@@ -170,6 +200,43 @@ if err == hybriddb.ErrKeyDeleted {
     // Key was deleted (tombstone present)
 }
 // Use val
+```
+
+### MVCC Snapshots
+
+```go
+// Create a snapshot for point-in-time reads
+snap := db.NewSnapshot()
+defer snap.Release()
+
+// Read from snapshot
+val, err := db.GetSnapshot(snap, []byte("key"))
+```
+
+### Range Iterators
+
+```go
+// Forward scan
+iter, err := db.NewIterator(hybriddb.IteratorOptions{
+    LowerBound: []byte("prefix:"),
+    UpperBound: []byte("prefix;"), // exclusive
+})
+for iter.Valid() {
+    key := iter.Key()
+    value := iter.Value()
+    seq := iter.SeqNum()
+    // process...
+    iter.Next()
+}
+iter.Close()
+
+// Reverse scan
+iter, err := db.NewIterator(hybriddb.IteratorOptions{
+    LowerBound: []byte("start"),
+    UpperBound: []byte("end"),
+    Reverse:    true,
+})
+// ... same as above
 ```
 
 ### Monitoring
@@ -191,7 +258,8 @@ fmt.Printf("Sequence number: %d\n", stats.SeqNum)
 ├── wal.log              # Current write-ahead log
 ├── wal_<seqNum>.log     # Archived WALs (after compaction)
 ├── l0_<seqNum>.sst      # Level-0 SSTable files (unsorted, will be compacted)
-└── btree.db             # B-tree storage (page-based)
+├── l1.db                # L1 B-tree (recently compacted data)
+└── l2.db                # L2 B-tree (long-term storage)
 ```
 
 ### File Formats
@@ -199,18 +267,20 @@ fmt.Printf("Sequence number: %d\n", stats.SeqNum)
 **WAL (Write-Ahead Log)**
 - Length-prefixed records with CRC32 checksums
 - Each record: kind (put/delete), sequence number, key, value (for puts only)
+- Group-commit batching for improved throughput
 
 **SSTable (Sorted String Table)**
 - Fixed-size 4 KB data blocks containing sorted entries
 - Index block mapping first key to block offset
 - Bloom filter for negative lookups
+- Optional block compression (zstd, etc.)
 - 32-byte footer with metadata
 
-**B-tree**
-- Fixed 4 KB pages stored in a single file
+**B-tree (L1/L2)**
+- Fixed 4 KB pages stored in separate files
 - 512-byte header (magic, root ID, page count)
 - Internal pages store separator keys and child pointers
-- Leaf pages store actual key-value entries
+- Leaf pages store actual key-value entries with sequence numbers
 
 ## Performance Characteristics
 
@@ -228,10 +298,10 @@ fmt.Printf("Sequence number: %d\n", stats.SeqNum)
 
 ### Compaction
 
-- **Trigger**: When L0 file count exceeds threshold
-- **Algorithm**: k-way merge of sorted SSTable streams with deduplication
+- **Trigger**: When L0 file count exceeds threshold (L0→L1) or L1 size exceeds threshold (L1→L2)
+- **Algorithm**: Incremental k-way merge of sorted SSTable streams with deduplication by sequence number
 - **Complexity**: O(n log k) where k = number of L0 files
-- **Non-blocking**: Happens in background goroutine
+- **Non-blocking**: Happens in background goroutine with atomic swaps
 
 ## Tuning
 
@@ -244,42 +314,55 @@ cfg.MemTableSize = 256 * 1024 * 1024  // 256 MB
 
 ### For Read-Heavy Workloads
 
-Decrease `L0CompactThreshold` to keep more data in the B-tree:
+Decrease `L0CompactThreshold` to compact more aggressively:
 ```go
-cfg.L0CompactThreshold = 2  // Compact more aggressively
+cfg.L0CompactThreshold = 2  // Compact after 2 L0 files
 ```
 
 ### For Large Datasets
 
-Both parameters can be tuned together:
+Tune both compaction thresholds:
 ```go
 cfg.MemTableSize = 512 * 1024 * 1024  // 512 MB
 cfg.L0CompactThreshold = 8            // Compact after 8 L0 files
+cfg.L1SizeThreshold = 1024 * 1024 * 1024  // 1 GB before L1→L2
+```
+
+### For High Throughput
+
+Use group-commit WAL and compression:
+```go
+cfg.WALSyncPolicy = wal.SyncBatch  // Batch fsyncs
+cfg.Codec = hybriddb.CodecZstd     // Compress SSTable blocks
 ```
 
 ## Concurrency
 
-- **Writes**: Serialized via WAL and MemTable mutexes (FIFO ordering)
-- **Reads**: Concurrent via RWMutex on MemTable and B-tree
-- **Compaction**: Runs in dedicated background goroutine (non-blocking)
+- **Writes**: Serialized via WAL group-commit and MemTable mutexes (FIFO ordering)
+- **Reads**: Concurrent via RWMutex on MemTable and B-trees; snapshots provide isolation
+- **Compaction**: Runs in dedicated background goroutine with atomic swaps (non-blocking)
+- **Iterators**: Concurrent iteration over consistent views
 
 ## Limitations & Future Work
 
 ### Known Limitations
 
-1. **Single-threaded writes**: Only one write goroutine can proceed at a time
-2. **Full B-tree rebuilds**: Compaction rebuilds the entire tree (suitable for moderate-sized datasets)
-3. **No range queries**: Only point lookups supported (no prefix scans)
-4. **No transactions**: Each operation is atomic but no multi-key ACID semantics
+1. **No concurrent writes**: Single writer via MemTable mutex (future: write batching)
+2. **No transactions**: Each operation is atomic but no multi-key ACID semantics
+3. **Memory usage**: Compaction requires temporary space for merged data
+4. **No prefix scans**: Range iterators support exact bounds but no prefix matching
 
 ### Future Enhancements
 
-- [ ] Parallel writes via write-ahead log batching
-- [ ] Incremental compaction (avoid full rebuilds)
-- [ ] Range scan support (iterator API)
-- [ ] Configurable compression (on SSTables)
-- [ ] Tiered storage (L1, L2 levels in B-tree)
-- [ ] MVCC for snapshot isolation
+- [x] MVCC snapshots for point-in-time reads
+- [x] Range iterator API (forward/reverse scans)
+- [x] Tiered compaction (L0→L1→L2)
+- [x] Configurable compression
+- [ ] Parallel writes via WAL batching
+- [ ] Multi-key transactions
+- [ ] Prefix scan support
+- [ ] Backup and restore
+- [ ] Distributed replication
 
 ## Testing
 

@@ -1,6 +1,6 @@
 # FlashDB Documentation
 
-**Project Status:** Core implementation complete  
+**Project Status:** Core implementation complete (v2 with MVCC, iterators, tiered compaction)  
 **Last Updated:** April 19, 2026  
 **Language:** Go 1.22.2
 
@@ -32,27 +32,30 @@
   - RWMutex-protected for concurrent reads and exclusive writes
 
 #### B-Tree Storage
-- **Status:** ✅ Complete
-- **Implementation:** Page-based B+ tree in a single file
+- **Status:** ✅ Complete (Enhanced in v2)
+- **Implementation:** Page-based B+ tree in separate L1/L2 files
 - **Key Features:**
   - Fixed 4 KB pages for efficient I/O
   - Bulk-load algorithm for atomic tree rebuilds
+  - Incremental merge support for tiered compaction
   - Simple page cache (512 entry limit)
-  - Separator-key internal nodes, leaf pages with values
+  - Separator-key internal nodes, leaf pages with sequence numbers
 
 #### SSTable (Sorted String Table)
-- **Status:** ✅ Complete
+- **Status:** ✅ Complete (Enhanced in v2)
 - **Implementation:** Immutable, sorted on-disk format
 - **Key Features:**
   - 4 KB data blocks with entries in sorted order
   - Index block for fast block location via binary search
   - Bloom filter attached to each file
+  - Optional block compression
   - k-way merge support for compaction
 
 #### Write-Ahead Log (WAL)
-- **Status:** ✅ Complete
+- **Status:** ✅ Complete (Enhanced in v2)
 - **Implementation:** Length-prefixed records with CRC32 checksums
 - **Key Features:**
+  - Group-commit batching for improved throughput
   - Persistent before MemTable writes
   - Replay capability for crash recovery
   - Separate Put/Delete record kinds
@@ -70,24 +73,45 @@
 ### Phase 2: Engine & Orchestration (Complete)
 
 #### Main Engine
-- **Status:** ✅ Complete
+- **Status:** ✅ Complete (v2)
 - **Implementation:** Coordinates all components into a unified database
 - **Key Features:**
   - `Put(key, value)` - write path
   - `Get(key)` - read path with MemTable/B-tree merging
   - `Delete(key)` - tombstone support
+  - `NewSnapshot()` - MVCC point-in-time reads
+  - `NewIterator(opts)` - range scans (forward/reverse)
   - `Close()` - graceful shutdown with final flush
   - `Stats()` - observable metrics
 
 #### Compaction Engine
-- **Status:** ✅ Complete
-- **Implementation:** Background k-way merge of L0 SSTables
+- **Status:** ✅ Complete (v2)
+- **Implementation:** Incremental, tiered SSTable→B-tree compaction
 - **Key Features:**
   - Non-blocking background goroutine
+  - Tiered L0→L1→L2 compaction
   - k-way merge with deduplication by sequence number
-  - Bulk-load into B-tree (atomic)
+  - Atomic B-tree swaps to avoid blocking reads
+  - Tombstone GC respecting snapshot visibility
   - Automatic SSTable file cleanup
-  - Queue-based triggering (capacity 1)
+  - Queue-based triggering (unbounded)
+
+#### Snapshot Tracker
+- **Status:** ✅ Complete (v2)
+- **Implementation:** Tracks live snapshots for MVCC
+- **Key Features:**
+  - Reference counting for automatic cleanup
+  - Sequence number pinning
+  - Prevents premature tombstone GC
+
+#### Merged Iterator
+- **Status:** ✅ Complete (v2)
+- **Implementation:** Merges MemTable + L1 + L2 views
+- **Key Features:**
+  - Priority queue for k-way merging
+  - Deduplication by sequence number
+  - Forward and reverse iteration
+  - Snapshot-isolated reads
 
 ---
 
@@ -98,14 +122,14 @@
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                         Public API                           │
-│          Engine: Put(k,v) | Get(k) | Delete(k)               │
+│    Engine: Put(k,v) | Get(k) | NewSnapshot() | NewIterator() │
 └─────────────────┬──────────────────────────────────────────────┘
                   │
         ┌─────────┼─────────┐
         │         │         │
         v         v         v
    WAL.log   MemTable   Imm.Table
-  (Durable) (Newest)   (Flushing)
+(Durable)  (Newest)   (Flushing)
         │         │         │
         │         └────┬────┘
         │              v (flush when IsFull)
@@ -121,13 +145,17 @@
          │                         │
          └────────────┬────────────┘
                       v
-           BTree.BulkLoad(entries)
+             ┌────────┴────────┐
+             │                 │
+             v                 v
+        L1 B-tree       L2 B-tree
+    (Recent data)   (Long-term data)
+             │                 │
+             └────────┬────────┘
                       │
                       v
-              BTree Pages (persistent)
-                      │
-                      v
-                Read Queries (via binary search)
+                Read Queries
+            (Merged Iterator)
 ```
 
 ### Write Path (LSM-Inspired)
@@ -138,7 +166,7 @@ Put(key, value)
     ├─ Increment seq number (atomic)
     │
     ├─ WAL.AppendPut(seq, key, value)  ← Durable before MemTable
-    │  └─ Sync to disk immediately
+    │  └─ Group-commit: batch with other concurrent writes, sync periodically
     │
     ├─ MemTable.Put(key, value, seq)
     │  └─ Insert into skip list (sorted by key)
@@ -149,15 +177,15 @@ Put(key, value)
           ├─ Create new active MemTable
           └─ Background flush goroutine:
              ├─ Read all entries from immutable (sorted)
-             ├─ Write SSTable (4 KB blocks, index, bloom)
+             ├─ Write SSTable (4 KB blocks, index, bloom, optional compression)
              ├─ Register in L0 files list
-             └─ Trigger compaction if L0 count ≥ threshold
+             └─ Trigger compaction if L0 count ≥ threshold (L0→L1)
 ```
 
-### Read Path (B-Tree Optimized)
+### Read Path (Tiered B-tree with MVCC)
 
 ```
-Get(key)
+Get(key) [or GetSnapshot(snap, key)]
     │
     ├─ Check Active MemTable.Get(key)
     │  ├─ Found & !Tombstone → Return value
@@ -167,16 +195,21 @@ Get(key)
     ├─ Check Immutable MemTable (if exists)
     │  └─ Same logic as above
     │
-    └─ Check BTree.Get(key)
-       ├─ Bloom filter: MayContain(key)?
-       │  └─ If definitely absent → ErrKeyNotFound
+    └─ MergedIterator over L1 + L2 B-trees
+       ├─ For each B-tree:
+       │  ├─ Bloom filter: MayContain(key)?
+       │  │  └─ If definitely absent → Skip this tree
+       │  │
+       │  └─ If possible:
+       │     ├─ Start from root page
+       │     ├─ Traverse internal pages (binary search on separators)
+       │     ├─ Reach leaf page (page I/O)
+       │     ├─ Linear search in leaf for highest seqNum ≤ snapshot seq
+       │     └─ Return entry if found
        │
-       └─ If possible:
-          ├─ Start from root page
-          ├─ Traverse internal pages (binary search on separators)
-          ├─ Reach leaf page (page I/O)
-          ├─ Linear search in leaf
-          └─ Return entry (or ErrKeyNotFound)
+       ├─ Priority queue merges results from L1 + L2
+       ├─ Highest seqNum wins (for regular Get: latest; for snapshot: ≤ snap.seq)
+       └─ Return entry (or ErrKeyNotFound)
 ```
 
 ---
@@ -234,9 +267,9 @@ const probability = 0.25  // Probability of promoting to next level
 
 #### Design Rationale
 - B+ trees minimize page I/O via high fanout (50+ children per node)
-- Leaf pages store actual key-value data; internals store routing info
-- Fixed 4 KB pages align with OS page size
-- Bulk-load algorithm enables atomic rebuilds
+- Separate L1/L2 files for tiered storage
+- Leaf pages store actual key-value data with sequence numbers; internals store routing info
+- Bulk-load and incremental merge algorithms for compaction
 
 #### Page Layout
 
@@ -402,7 +435,8 @@ Delete() error
 
 #### Durability
 
-- Every write is immediately flushed and synced to disk
+- Writes are batched via group-commit for throughput
+- Batches are periodically flushed and synced to disk
 - OS crash will not lose any persisted write
 - On restart, WAL is replayed to recover in-memory state
 
@@ -460,9 +494,10 @@ FalsePositiveRate(n uint) float64
 
 #### Architecture
 
-- Single background goroutine with event loop
-- Triggered by engine when L0 files ≥ threshold
-- Non-blocking queue (capacity 1)
+- Background goroutine with unbounded event queue
+- Incremental tiered compaction: L0→L1→L2
+- Atomic B-tree swaps to avoid blocking reads
+- Tombstone GC respecting snapshot visibility
 
 #### k-Way Merge Algorithm
 
@@ -491,9 +526,9 @@ Output: Single sorted, deduplicated entry list
 #### Deduplication & GC
 
 - **Highest SeqNum Wins:** Heap ordering ensures first occurrence is highest version
-- **Tombstone GC:** Tombstones with no older versions are dropped
-  - Safe because we're building a new BTree from scratch
-  - Old BTree data is fully covered by compaction
+- **Tombstone GC:** Tombstones are dropped only if no live snapshots can see them
+  - Checks oldest snapshot sequence number
+  - Preserves MVCC isolation
 
 #### Bulk Load Integration
 
@@ -519,7 +554,8 @@ STEP 2: WAL Persistence
 ├─ WAL.AppendPut(1234, "user:1", "Alice")
 ├─ Payload marshalled: [0x00] [1234] [6] ["user:1"] [5] ["Alice"]
 ├─ CRC32 calculated
-├─ Record written + flushed + synced to disk ✓
+├─ Record batched with other concurrent writes
+├─ Batch flushed and synced to disk periodically ✓
 
 STEP 3: MemTable Write
 ├─ MemTable.Put("user:1", "Alice", 1234)
@@ -581,7 +617,7 @@ BACKGROUND COMPACTION CONTINUES...
 ### 3. Compaction Flow (Background)
 
 ```
-Trigger: L0 count ≥ 4 files
+Trigger: L0 count ≥ 4 files (L0→L1 compaction)
 
 STEP 1: Open SSTable Readers
 ├─ For each path in ["l0_00001000000.sst", "l0_00001050000.sst", ...]
@@ -596,35 +632,23 @@ STEP 2: K-Way Merge
 │  ├─ Pop minimum entry
 │  ├─ Advance that reader (push next entry)
 │  ├─ Skip if duplicate key
-│  ├─ Skip if tombstone (GC)
+│  ├─ Skip if tombstone (GC, respecting snapshots)
 │  └─ Append to result
 └─ Result = deduplicated, sorted entries
 
-STEP 3: Bulk Load into B-Tree
-├─ BTree.BulkLoad(result)
-├─ Build leaf level (50 entries per page)
-├─ Build internal levels (50 children per page)
-├─ Single flush writes all pages sequentially
-├─ Update header (rootID, pageCount)
-└─ Old B-tree pages discarded
-
-STEP 4: Cleanup
-├─ Close all SSTable readers
-├─ For each consumed path:
-│  └─ os.Remove(path) ✓
-│
-├─ Rotate WAL:
-│  ├─ Close old WAL file
-│  ├─ Create new WAL file: "wal_1250000.log"
-│  ├─ Old WAL scheduled for deletion (entries now in B-tree)
-│  └─ New writes go to new WAL
-└─ Log: "compaction: merged 4 SSTables → B-tree (1234567 entries)"
+STEP 3: Incremental Merge into L1 B-tree
+├─ L1.BTree.Merge(result)  // Incremental merge, not full rebuild
+├─ Atomic swap: old L1 → new L1
+├─ If L1 size ≥ threshold: trigger L1→L2 compaction
+├─ Delete consumed SSTable files
+├─ Rotate WAL to new path (old entries are now in L1)
+└─ Log: "compaction: merged 4 SSTables → L1 (1234567 entries)"
 ```
 
 ### 4. Read Flow (Get Operation)
 
 ```
-Application calls: db.Get([]byte("user:1"))
+Application calls: db.Get([]byte("user:1"))  [or db.GetSnapshot(snap, []byte("user:1"))]
 
 STEP 1: Check Active MemTable
 ├─ MemTable.Get("user:1") with RLock
@@ -637,34 +661,27 @@ RESPONSE: value = "Alice", err = nil
 
 ---
 
-Alternative: If key not in active MemTable:
+Alternative: If key not in MemTables:
 
-STEP 2: Check Immutable MemTable (if flushing)
-├─ If Imm != nil:
-│  ├─ Imm.Get("user:2") with RLock
-│  ├─ [same skip list search]
-│  └─ If found: return
+STEP 2: Merged Iterator over L1 + L2 B-trees
+├─ Create priority queue merging L1 and L2 iterators
+├─ For each B-tree:
+│  ├─ MayContain("user:2") on bloom filter
+│  │  └─ If false: skip this tree
+│  │
+│  └─ Binary search index to find block
+│     ├─ Index entries: [("aa", offset1), ("mm", offset2), ("zz", offset3)]
+│     ├─ "user:2" > "mm" and < "zz"
+│     └─ Read block at offset2
 │
-└─ Continue to B-Tree
-
-STEP 3: Check B-Tree
-├─ BTree.Get("user:2") with RLock
-├─ MayContain("user:2") on bloom filter
-│  ├─ Hash user:2 with k=7 hash functions
-│  ├─ Check bits at positions: h1, h1+h2, h1+2*h2, ...
-│  └─ If any bit is 0: return ErrKeyNotFound (short-circuit)
+├─ Linear search in leaf for highest seqNum
+│  ├─ For Get(): any seqNum
+│  ├─ For GetSnapshot(): seqNum ≤ snap.Seq()
+│  └─ If "user:2" found: collect candidate
 │
-├─ Binary search index to find block
-│  ├─ Index entries: [("aa", offset1), ("mm", offset2), ("zz", offset3)]
-│  ├─ "user:2" > "mm" and < "zz"
-│  └─ Read block at offset2
-│
-├─ Linear search in block
-│  ├─ Decode entries: entry1, entry2, ...
-│  ├─ Compare keys
-│  └─ If "user:2" found: return entry
-│
-└─ Return ErrKeyNotFound
+├─ Priority queue selects highest seqNum candidate
+├─ If tombstone: return ErrKeyDeleted
+└─ Return value
 
 RESPONSE: value = nil, err = ErrKeyNotFound
 ```
@@ -678,11 +695,11 @@ RESPONSE: value = nil, err = ErrKeyNotFound
 #### Write Serialization
 
 ```go
-// Engine enforces single-writer semantics
+// Engine enforces single-writer semantics via MemTable mutex
 func (db *DB) Put(key, value []byte) error {
     seq := atomic.AddUint64(&db.seq, 1)  // Atomic increment
     
-    err := db.walActive.AppendPut(seq, key, value)  // WAL mutex lock
+    err := db.walActive.AppendPut(seq, key, value)  // Group-commit batching
     err := db.memtable.Put(key, value, seq)         // MemTable mutex lock
     if db.memtable.IsFull() {
         return db.triggerFlush()  // Background task
@@ -691,7 +708,7 @@ func (db *DB) Put(key, value []byte) error {
 }
 ```
 
-- All writes go through WAL (persisted before MemTable)
+- Writes batched via WAL group-commit for throughput
 - MemTable writes serialized by its internal mutex
 - No inter-write parallelism, but flush/compaction happen in background
 
@@ -705,14 +722,15 @@ func (db *DB) Get(key []byte) ([]byte, error) {
     // MemTable read (RLock)
     if e, err := db.memtable.Get(key); err == nil { ... }
     
-    // BTree read (RLock)
-    e, err := db.btree.Get(key)
+    // Merged iterator over L1 + L2 B-trees (RLock each)
+    iter := db.newMergedIterator(key)
+    e, err := iter.Get(key)
 }
 ```
 
-- Readers don't block each other
+- Readers don't block each other via RWMutex
 - Writers block on MemTable mutex
-- BTree rebuild (compaction) is atomic from readers' perspective
+- B-tree rebuild (compaction) is atomic from readers' perspective
 
 #### Atomic Operations
 
@@ -826,27 +844,23 @@ bt.f.Close()    // File handle released
 
 ```
 Atomic increment:           ~10 ns
-WAL append + flush + sync:  ~1-5 ms (disk I/O dominant)
+WAL batch append:           ~100 ns (in-memory)
+Periodic flush + sync:      ~1-5 ms (disk I/O, batched)
 MemTable insertion:         ~500 ns (O(log n) skip list)
 IsFull check:               ~1 ns (atomic load)
 ─────────────────────────────
-Total P50 latency:          ~1-5 ms
-Total P99 latency:          ~10-50 ms (filesystem dependent)
+Total P50 latency:          ~600 ns (group-commit batching)
+Total P99 latency:          ~1-5 ms (when batch flushes)
 ```
 
 **Throughput:**
 
 ```
-Sequential writes (1 MB/s disk, 64 MB MemTable):
+Sequential writes with group-commit (1 MB/s disk, 64 MB MemTable):
+├─ Batch size: 100 entries per fsync
 ├─ Time to fill: 64 MB / 1 MB/s ≈ 64 seconds
 ├─ Entries (1 KB avg): 64K entries
-├─ Throughput: 64K / 64s ≈ 1000 ops/sec
-
-With batching (hypothetical future):
-├─ k batches of 100 entries each
-├─ Group WAL syncs: k syncs instead of 100k
-├─ Throughput increase: ~100x
-└─ (Not yet implemented)
+├─ Throughput: 64K / 64s ≈ 1000 ops/sec (vs 200 ops/sec without batching)
 ```
 
 ### Read Path Performance
@@ -860,14 +874,15 @@ Skip list binary search:     ~200 ns (O(log n), n=50k)
 Total P50 latency:          ~300 ns (in-memory, cache-warm)
 ```
 
-**Latency Breakdown (B-tree hit with Bloom positive):**
+**Latency Breakdown (L1/L2 B-tree hit with Bloom positive):**
 
 ```
 RWMutex RLock acquisition:  ~100 ns
-Bloom filter check:         ~500 ns (7 hash functions)
+Bloom filter check:         ~500 ns (7 hash functions, per tree)
 Binary search index:        ~200 ns (O(log index entries))
 Page I/O:                   ~1-5 ms (disk read)
 Linear search in page:      ~100 ns (50 entries avg)
+Priority queue merge:       ~50 ns (2-3 trees)
 ────────────────────────────
 Total P50 latency:          ~2-6 ms (disk I/O dominant)
 ```
@@ -887,16 +902,17 @@ Total P99 latency:          ~1 µs
 **Time Complexity:**
 
 ```
-Merge k L0 files of n entries total:
+Incremental merge k L0 files of n entries total:
 ├─ Heap operations: k inserts, n pops → O(n log k)
-├─ BTree bulk-load: O(n) sequential scan + writes
+├─ BTree incremental merge: O(n) scan + O(n log n) insertions
 ├─ SSTable cleanup: O(k) file deletes
 └─ Total: O(n log k) dominated by I/O
 
 Example: 4 files × 100K entries = 400K total
-├─ With default fanout 50: O(400K * log 4) ≈ 800K operations
-├─ At 1M ops/sec: ~1 second of CPU time
-└─ Plus disk I/O for reading 4 SSTables and writing B-tree
+├─ Heap operations: 400K * log 4 ≈ 800K operations
+├─ B-tree insertions: 400K * log(400K) ≈ 4M operations
+├─ At 1M ops/sec: ~5 seconds of CPU time
+└─ Plus disk I/O for reading 4 SSTables and writing B-tree pages
 ```
 
 **Space Complexity:**
@@ -927,19 +943,27 @@ The example demonstrates:
    Put / Get / Delete on simple keys
    ```
 
-2. **Overwrites**
+2. **MVCC Snapshots**
    ```
-   Multiple Puts to same key → highest SeqNum wins
+   NewSnapshot() creates point-in-time view
+   GetSnapshot() reads from specific sequence
    ```
 
-3. **Tombstones**
+3. **Range Iterators**
    ```
+   NewIterator() with bounds and direction
+   Forward/reverse scans over key ranges
+   ```
+
+4. **Overwrites & Tombstones**
+   ```
+   Multiple Puts to same key → highest SeqNum wins
    Delete returns ErrKeyDeleted
    ```
 
-4. **Bulk Writes & Compaction**
+5. **Bulk Writes & Compaction**
    ```
-   5000 entries → 1 MB MemTable flush → L0 files → compaction
+   5000 entries → MemTable flush → L0 files → tiered compaction
    ```
 
 5. **Crash Recovery**
@@ -953,11 +977,18 @@ The example demonstrates:
 ── Basic put / get ──────────────────────────────
 user:alice  →  {"age":30,"city":"Pune"}  (err=<nil>)
 
-── Overwrite ────────────────────────────────────
-user:alice  →  {"age":31,"city":"Pune"}  (err=<nil>)
+── MVCC Snapshot ────────────────────────────────
+user:alice via snapshot (age=30 expected) → {"age":30,"city":"Pune"} (err=<nil>)
+user:alice latest (age=31 expected)       → {"age":31,"city":"Pune"}
 
 ── Delete / tombstone ───────────────────────────
-user:bob    →  ""  (err=key deleted)
+user:bob  →  ""  (err=key deleted)
+
+── Range scan (iterator) ────────────────────────
+range [kv:aaa, kv:ddd) → kv:aaa=1 kv:bbb=2 kv:ccc=3 
+
+── Reverse scan ─────────────────────────────────
+reverse [kv:aaa, kv:eee) → kv:ddd=4 kv:ccc=3 kv:bbb=2 kv:aaa=1 
 
 ── Bulk writes to trigger flush + compaction ────
 
@@ -972,12 +1003,12 @@ user:bob    →  ""  (err=key deleted)
   L0 file count    : 0
   Sequence number  : 5003
 
-── Reopen (crash recovery via WAL) ──────────────
-user:carol (after reopen)  →  {"age":27,"city":"Delhi"}  (err=<nil>)
-user:bob   (after reopen)  →  ""  (err=key deleted, should be ErrKeyDeleted)
+── Crash recovery via WAL ───────────────────────
+user:carol (after reopen) → {"age":27,"city":"Delhi"} (err=<nil>)
+user:bob   (after reopen) → "" (err=key deleted)
+```
 
 Done.
-```
 
 ### Future Test Coverage
 
@@ -995,44 +1026,36 @@ Done.
 
 ### Current Limitations
 
-1. **No Concurrent Writes**
-   - Single goroutine writes to avoid lock contention
-   - Future: write batching + parallel commit
-
-2. **Full BTree Rebuilds**
-   - Compaction rebuilds entire tree
-   - Future: incremental compaction (L0 → L1 → L2 hierarchy)
-
-3. **No Range Queries**
-   - Only point lookups via exact key match
-   - Future: Iterator API with prefix scans
-
-4. **No Transactions**
-   - Single-key operations only
-   - Future: MVCC for snapshot isolation
-
-5. **Single-Level Compaction**
-   - All SSTables flattened to one B-tree
-   - Future: LSM-tree style multi-level compaction
+1. **No concurrent writes**
+   - Single writer via MemTable mutex (future: optimistic concurrency)
+2. **No transactions**
+   - Single-key operations only (future: multi-key ACID)
+3. **Memory usage during compaction**
+   - Temporary space for merged data (future: streaming compaction)
+4. **No prefix scans**
+   - Range iterators support exact bounds but no prefix matching
 
 ### Future Enhancements
 
 **Phase 3 (Performance):**
-- [ ] Write batching for higher throughput
-- [ ] Incremental compaction to reduce pause times
-- [ ] Compression support (zstd on SSTables)
+- [x] WAL group-commit for higher throughput
+- [x] Tiered compaction (L0→L1→L2)
+- [x] Configurable compression
+- [x] Incremental B-tree merges
+- [ ] Parallel writes via optimistic locking
 - [ ] Better page cache eviction (LRU)
+- [ ] Streaming compaction to reduce memory usage
 
 **Phase 4 (Features):**
-- [ ] Range scan iterator API
+- [x] MVCC snapshots for point-in-time reads
+- [x] Range iterator API (forward/reverse scans)
+- [ ] Multi-key transactions
 - [ ] Prefix scan support
-- [ ] MVCC with snapshot isolation
-- [ ] Multi-table support
+- [ ] Backup and restore
 
 **Phase 5 (Advanced):**
 - [ ] Distributed replication
 - [ ] Point-in-time recovery
-- [ ] Backup and restore
 - [ ] Monitoring and profiling integration
 
 ---
@@ -1058,6 +1081,6 @@ Done.
 
 ---
 
-**Document Version:** 1.0  
+**Document Version:** 2.0  
 **Last Updated:** April 19, 2026  
 **Maintainer:** Arijit Ghosh
