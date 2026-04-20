@@ -363,6 +363,24 @@ cfg.Codec = hybriddb.CodecZstd     // Compress SSTable blocks
 - [ ] Prefix scan support
 - [ ] Backup and restore
 - [ ] Distributed replication
+- [ ] Adaptive bloom filter sizing
+- [ ] Column-family / namespace support
+- [ ] Key TTL and time-to-live expiry
+- [ ] Prometheus metrics exporter
+- [ ] Block cache (ARC / CLOCK-Pro)
+- [ ] Secondary indexes
+- [ ] Structured query / filter pushdown
+- [ ] Zstd / Snappy block compression
+- [ ] Read-your-writes consistency guarantee
+- [ ] Distributed query fan-out
+- [ ] CLI and REPL tool
+- [ ] Structured logging with slog
+- [ ] Pluggable storage backend
+- [ ] Write stall and backpressure
+- [ ] Schema registry and value codec
+- [ ] Compaction priority queue
+- [ ] Chaos / fault-injection testing harness
+- [ ] OpenTelemetry trace spans
 
 ## Testing
 
