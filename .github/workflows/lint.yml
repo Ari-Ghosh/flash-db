@@ -1,0 +1,71 @@
+name: Lint
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.22.2'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
+          args: --timeout=5m
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go fmt
+        run: |
+          if [ -n "$(go fmt ./...)" ]; then
+            echo "Go fmt found formatting issues"
+            exit 1
+          fi
+
+      - name: goimports
+        run: |
+          go install golang.org/x/tools/cmd/goimports@latest
+          if [ -n "$(goimports -l ./src)" ]; then
+            echo "goimports found issues"
+            exit 1
+          fi
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.22.2'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...

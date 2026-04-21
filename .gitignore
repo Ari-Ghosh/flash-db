@@ -20,3 +20,39 @@
 
 # Go workspace file
 flashdb
+
+### IDE ###
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.iml
+.DS_Store
+Thumbs.db
+
+### Build ###
+/bin/
+/dist/
+*.out
+*.log
+*.tmp
+
+### Testing ###
+coverage.out
+coverage.html
+
+### Development ###
+tmp/
+temp/
+.env
+.env.local
+*.pem
+*.key
+
+### Docker ###
+.docker/
+docker-compose.override.yml
+
+### Dependencies ###
+vendor/

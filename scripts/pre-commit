@@ -1,0 +1,45 @@
+#!/bin/bash
+
+# Pre-commit hook for FlashDB
+# This hook is run automatically before each commit
+# To install: cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+
+set -e
+
+echo "Running pre-commit checks..."
+
+# Format check
+echo "Checking code formatting..."
+if ! go fmt ./... > /dev/null 2>&1; then
+    echo "❌ Code formatting failed"
+    exit 1
+fi
+
+# Vet check
+echo "Running go vet..."
+if ! go vet ./... > /dev/null 2>&1; then
+    echo "❌ Go vet failed"
+    exit 1
+fi
+
+# Lint check if golangci-lint is installed
+if command -v golangci-lint &> /dev/null; then
+    echo "Running linters..."
+    if ! golangci-lint run --deadline=5m ./... > /dev/null 2>&1; then
+        echo "❌ Linting failed"
+        exit 1
+    fi
+else
+    echo "⚠️  golangci-lint not installed, skipping lint check"
+    echo "   Install with: make setup"
+fi
+
+# Test check
+echo "Running tests..."
+if ! go test -short ./... > /dev/null 2>&1; then
+    echo "❌ Tests failed"
+    exit 1
+fi
+
+echo "✅ All pre-commit checks passed!"
+exit 0

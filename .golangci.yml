@@ -1,0 +1,138 @@
+run:
+  timeout: 5m
+  tests: true
+  skip-dirs:
+    - vendor
+    - docs
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+
+linters:
+  enable:
+    # Default linters
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - typecheck
+    - unused
+    
+    # Additional useful linters
+    - asasfetures
+    - bodyclose
+    - dogsled
+    - dupl
+    - errname
+    - errorlint
+    - exportloopref
+    - exhaustive
+    - forcetypeassert
+    - funlen
+    - gochecknoglobals
+    - gochecknoinits
+    - gocognac
+    - gocritic
+    - gocyclo
+    - godot
+    - godox
+    - goerr113
+    - gofmt
+    - goimports
+    - gomodguard
+    - goprintffuncname
+    - gosec
+    - lll
+    - misspell
+    - nakedret
+    - nestif
+    - nolintlint
+    - prealloc
+    - predeclared
+    - revive
+    - stylecheck
+    - tagliatelle
+    - unconvert
+    - unparam
+    - wastedassign
+    - whitespace
+
+linters-settings:
+  # Error checking
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+
+  # Code complexity
+  gocyclo:
+    min-complexity: 15
+
+  funlen:
+    lines: 100
+    statements: 50
+
+  lll:
+    line-length: 120
+    tab-width: 4
+
+  # Import formatting
+  goimports:
+    local-prefixes: local/flashdb
+
+  # Code style
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - opinionated
+      - performance
+
+  revive:
+    ignore-generated-header: true
+    severity: warning
+
+  # Security
+  gosec:
+    excludes:
+      - G404  # Use of weak random number generator
+
+  godox:
+    keywords:
+      - TODO
+      - FIXME
+      - BUG
+      - HACK
+
+  # Naming
+  tagliatelle:
+    case:
+      rules:
+        json: snake
+        yaml: snake
+
+issues:
+  exclude-rules:
+    # Exclude some linters from running on test files
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - errcheck
+        - gocognac
+        - dupl
+        - funlen
+
+    # Exclude godot for test files
+    - path: _test\.go
+      linters:
+        - godot
+
+    # Allow unused parameters in interfaces
+    - source: "^func \\(.*\\) [A-Z]"
+      linters:
+        - unparam
+
+  max-issues-per-linter: 0
+  max-same-issues: 0

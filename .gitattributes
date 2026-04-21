@@ -1,0 +1,37 @@
+# Attributes for this repository
+
+# Auto detect text files and normalize line endings to LF
+* text=auto
+
+# Go
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+
+# Shell
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Docker
+Dockerfile text eol=lf
+docker-compose.yml text eol=lf
+.dockerignore text eol=lf
+
+# Markdown
+*.md text eol=lf
+
+# YAML
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# JSON
+*.json text eol=lf
+
+# Git
+.gitignore text eol=lf
+.gitattributes text eol=lf
+
+# Text files
+LICENSE text eol=lf
+README.md text eol=lf
+CONTRIBUTING.md text eol=lf
