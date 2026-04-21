@@ -131,7 +131,7 @@ type Leader struct {
 // NewLeader creates a Leader node (does not start listening yet).
 func NewLeader(cfg Config) (*Leader, error) {
 	cfg.defaults()
-	if cfg.Secret == nil || len(cfg.Secret) < 16 {
+	if len(cfg.Secret) < 16 {
 		return nil, fmt.Errorf("replication: secret must be at least 16 bytes")
 	}
 	return &Leader{
@@ -301,7 +301,7 @@ type Follower struct {
 // NewFollower creates a Follower node.
 func NewFollower(cfg Config, applier Applier) (*Follower, error) {
 	cfg.defaults()
-	if cfg.Secret == nil || len(cfg.Secret) < 16 {
+	if len(cfg.Secret) < 16 {
 		return nil, fmt.Errorf("replication: secret must be at least 16 bytes")
 	}
 	f := &Follower{

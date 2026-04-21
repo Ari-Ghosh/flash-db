@@ -1,0 +1,32 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Testing
+*.test
+*.out
+
+# Dependencies
+vendor/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+bin/
+dist/
+
+# Documentation
+*.md
+
+# Temporary files
+tmp/
+temp/

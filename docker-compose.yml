@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  flashdb:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: flashdb
+    ports:
+      - "8080:8080"
+    volumes:
+      - flashdb_data:/app/data
+    environment:
+      - LOG_LEVEL=info
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "test", "-f", "/app/data/MANIFEST"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  flashdb_data:
+    driver: local
