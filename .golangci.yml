@@ -1,12 +1,14 @@
 run:
   timeout: 5m
   tests: true
-  skip-dirs:
+
+issues:
+  exclude-dirs:
     - vendor
     - docs
 
 output:
-  format: colored-line-number
+  formats: colored-line-number
   print-issued-lines: true
   print-linter-name: true
 
@@ -22,7 +24,6 @@ linters:
     - unused
     
     # Additional useful linters
-    - asasfetures
     - bodyclose
     - dogsled
     - dupl
@@ -34,7 +35,6 @@ linters:
     - funlen
     - gochecknoglobals
     - gochecknoinits
-    - gocognac
     - gocritic
     - gocyclo
     - godot
