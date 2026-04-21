@@ -4,12 +4,16 @@ A high-performance hybrid database engine combining **LSM (Log-Structured Merge)
 
 ## Overview
 
-FlashDB v2 implements a production-grade key-value store architecture that optimizes both write throughput and read latency with advanced features:
+FlashDB v3 implements a production-grade key-value store architecture that optimizes both write throughput and read latency with advanced features:
 
 - **Write Path**: WAL (group-commit) → MemTable (skip list) → SSTable (L0 files) → Tiered Compaction (L0→L1→L2)
 - **Read Path**: MemTable → L1 B-tree → L2 B-tree
 - **MVCC Snapshots**: Point-in-time consistent reads
 - **Range Iterators**: Forward and reverse scans over key ranges
+- **Multi-Key Transactions**: Optimistic concurrency control with conflict detection
+- **Prefix Scans**: Efficient range queries over key prefixes
+- **Hot Backup & Restore**: Point-in-time backups with integrity verification
+- **Distributed Replication**: Single-leader WAL shipping to read-only followers
 - **Crash Recovery**: Write-Ahead Log (WAL) with replay on startup
 - **Bloom Filters**: Fast negative lookups for absent keys
 - **Compression**: Configurable block compression for SSTables
@@ -23,6 +27,8 @@ FlashDB v2 implements a production-grade key-value store architecture that optim
 │                      Public API                         │
 │         db.Put(k,v) | db.Get(k) | db.Delete(k)          │
 │     db.NewSnapshot() | db.NewIterator(opts)            │
+│     db.Begin() | db.PrefixScan(prefix)                 │
+│     db.Backup(dest) | db.Restore(src, dest)            │
 └────────────────┬────────────────────────────────────────┘
                  │
     ┌────────────┼────────────┐
@@ -56,6 +62,25 @@ FlashDB v2 implements a production-grade key-value store architecture that optim
                          (Merged Iterator)
 ```
 
+### Replication Architecture
+
+```
+Leader Node                    Follower Node
+┌─────────────────┐           ┌─────────────────┐
+│   Engine.DB     │           │   Engine.DB     │
+│   ┌─────────┐   │           │   ┌─────────┐   │
+│   │  WAL    │   │           │   │  WAL    │   │
+│   │ append  ├───┼───────────┼──►│ apply   │   │
+│   └─────────┘   │           │   └─────────┘   │
+│   Replication   │           │   Replication   │
+│   Log (ring)    │           │   Applier       │
+└─────────────────┘           └─────────────────┘
+         │                              │
+         v                              v
+    TCP Stream                    Read-Only DB
+    (authenticated)              (catch-up sync)
+```
+
 ### Write Path (LSM-style)
 
 1. **WAL (Write-Ahead Log)**: Every write is immediately persisted as a log entry before touching in-memory structures (group-commit for throughput)
@@ -76,6 +101,10 @@ FlashDB v2 implements a production-grade key-value store architecture that optim
 - **Tombstones**: Deletions are marked with a tombstone flag; separate lifecycle from puts
 - **MVCC Snapshots**: Point-in-time consistent reads via `db.NewSnapshot()`
 - **Range Iterators**: Forward/reverse scans with `db.NewIterator(opts)`
+- **Multi-Key Transactions**: Optimistic concurrency control with `db.Begin()` / `Commit()`
+- **Prefix Scans**: Efficient prefix-based range queries with `db.PrefixScan(prefix)`
+- **Hot Backup & Restore**: Point-in-time backups with `db.Backup(destDir)` and integrity verification
+- **Distributed Replication**: Single-leader WAL shipping to read-only followers
 - **Thread-Safe**: All components use appropriate synchronization (mutexes, atomic operations)
 - **Crash Recovery**: WAL replay restores in-memory state on startup
 - **Bloom Filters**: Negative lookups are fast (SSTable files include Bloom filters)
@@ -171,7 +200,8 @@ type Config struct {
     L0CompactThreshold int           // Trigger compaction after N L0 files (default 4)
     L1SizeThreshold    int64         // Promote L1 to L2 when size exceeded (default 256 MB)
     WALSyncPolicy      wal.SyncPolicy // WAL durability vs throughput (default SyncBatch)
-    Codec              hybriddb.Codec // Block compression for SSTables (default None)
+    Codec              types.Codec // Block compression for SSTables (default None)
+    Replication        *replication.Config // Optional replication configuration
 }
 ```
 
@@ -193,13 +223,45 @@ val, err := db.Get([]byte("key"))
 
 // Get value at specific sequence number
 val, err := db.GetAt([]byte("key"), seqNum)
-if err == hybriddb.ErrKeyNotFound {
+if err == types.ErrKeyNotFound {
     // Key does not exist
 }
-if err == hybriddb.ErrKeyDeleted {
+if err == types.ErrKeyDeleted {
     // Key was deleted (tombstone present)
 }
 // Use val
+```
+
+### Multi-Key Transactions
+
+```go
+// Start a transaction
+tx := db.Begin()
+defer tx.Rollback() // Rollback if not committed
+
+// Read and write operations
+aliceBal, _ := tx.Get([]byte("alice"))
+tx.Put([]byte("alice"), []byte("900"))
+tx.Put([]byte("bob"), []byte("600"))
+
+// Commit atomically
+if err := tx.Commit(); err != nil {
+    // Handle conflict or other error
+}
+```
+
+### Prefix Scans
+
+```go
+// Scan all keys with prefix
+iter, err := db.PrefixScan([]byte("user:"))
+for iter.Valid() {
+    key := iter.Key()
+    value := iter.Value()
+    // process...
+    iter.Next()
+}
+iter.Close()
 ```
 
 ### MVCC Snapshots
@@ -217,7 +279,7 @@ val, err := db.GetSnapshot(snap, []byte("key"))
 
 ```go
 // Forward scan
-iter, err := db.NewIterator(hybriddb.IteratorOptions{
+iter, err := db.NewIterator(types.IteratorOptions{
     LowerBound: []byte("prefix:"),
     UpperBound: []byte("prefix;"), // exclusive
 })
@@ -231,7 +293,7 @@ for iter.Valid() {
 iter.Close()
 
 // Reverse scan
-iter, err := db.NewIterator(hybriddb.IteratorOptions{
+iter, err := db.NewIterator(types.IteratorOptions{
     LowerBound: []byte("start"),
     UpperBound: []byte("end"),
     Reverse:    true,
@@ -247,6 +309,17 @@ fmt.Printf("MemTable entries: %d\n", stats.MemTableCount)
 fmt.Printf("MemTable size: %d bytes\n", stats.MemTableSize)
 fmt.Printf("L0 file count: %d\n", stats.L0FileCount)
 fmt.Printf("Sequence number: %d\n", stats.SeqNum)
+```
+
+### Backup and Restore
+
+```go
+// Hot backup (non-blocking)
+manifest, err := db.Backup("/path/to/backup")
+fmt.Printf("Backed up %d files at seq %d\n", len(manifest.Files), manifest.SnapSeq)
+
+// Restore from backup
+err := backup.Restore("/path/to/backup", "/path/to/new_db")
 ```
 
 ## Storage Format
@@ -333,7 +406,7 @@ cfg.L1SizeThreshold = 1024 * 1024 * 1024  // 1 GB before L1→L2
 Use group-commit WAL and compression:
 ```go
 cfg.WALSyncPolicy = wal.SyncBatch  // Batch fsyncs
-cfg.Codec = hybriddb.CodecZstd     // Compress SSTable blocks
+cfg.Codec = types.CodecZstd     // Compress SSTable blocks
 ```
 
 ## Concurrency
@@ -358,19 +431,18 @@ cfg.Codec = hybriddb.CodecZstd     // Compress SSTable blocks
 - [x] Range iterator API (forward/reverse scans)
 - [x] Tiered compaction (L0→L1→L2)
 - [x] Configurable compression
-- [ ] Parallel writes via WAL batching
-- [ ] Multi-key transactions
-- [ ] Prefix scan support
-- [ ] Backup and restore
-- [ ] Distributed replication
-- [ ] Adaptive bloom filter sizing
+- [x] Multi-key transactions with optimistic concurrency control
+- [x] Prefix scan support
+- [x] Hot backup and restore with integrity verification
+- [x] Distributed replication (single-leader WAL shipping)
+- [x] Parallel writes via WAL batching
+- [ ] Parallel writes via optimistic locking
 - [ ] Column-family / namespace support
 - [ ] Key TTL and time-to-live expiry
 - [ ] Prometheus metrics exporter
 - [ ] Block cache (ARC / CLOCK-Pro)
 - [ ] Secondary indexes
 - [ ] Structured query / filter pushdown
-- [ ] Zstd / Snappy block compression
 - [ ] Read-your-writes consistency guarantee
 - [ ] Distributed query fan-out
 - [ ] CLI and REPL tool
@@ -396,4 +468,4 @@ MIT License
 
 ---
 
-**Last Updated:** April 19, 2026
+**Last Updated:** April 22, 2026

@@ -1,7 +1,7 @@
 # FlashDB Documentation
 
-**Project Status:** Core implementation complete (v2 with MVCC, iterators, tiered compaction)  
-**Last Updated:** April 19, 2026  
+**Project Status:** Core implementation complete (v3 with transactions, replication, backup/restore)  
+**Last Updated:** April 22, 2026  
 **Language:** Go 1.22.2
 
 ---
@@ -15,6 +15,9 @@
 5. [Implementation Notes](#implementation-notes)
 6. [Performance Analysis](#performance-analysis)
 7. [Testing & Validation](#testing--validation)
+8. [Transactions](#transactions)
+9. [Replication](#replication)
+10. [Backup & Restore](#backup--restore)
 
 ---
 
@@ -73,7 +76,7 @@
 ### Phase 2: Engine & Orchestration (Complete)
 
 #### Main Engine
-- **Status:** ✅ Complete (v2)
+- **Status:** ✅ Complete (v3)
 - **Implementation:** Coordinates all components into a unified database
 - **Key Features:**
   - `Put(key, value)` - write path
@@ -81,6 +84,9 @@
   - `Delete(key)` - tombstone support
   - `NewSnapshot()` - MVCC point-in-time reads
   - `NewIterator(opts)` - range scans (forward/reverse)
+  - `PrefixScan(prefix)` - prefix-based range queries
+  - `Begin()` - multi-key transactions
+  - `Backup(destDir)` - hot backup
   - `Close()` - graceful shutdown with final flush
   - `Stats()` - observable metrics
 
@@ -113,6 +119,47 @@
   - Forward and reverse iteration
   - Snapshot-isolated reads
 
+### Phase 3: Advanced Features (Complete)
+
+#### Multi-Key Transactions
+- **Status:** ✅ Complete (v3)
+- **Implementation:** Optimistic concurrency control
+- **Key Features:**
+  - `Txn.Begin()` - start transaction with snapshot
+  - `Txn.Get/Put/Delete()` - buffered operations
+  - `Txn.Commit()` - validate read-set, apply atomically
+  - Conflict detection via sequence number comparison
+  - WAL batching for atomic multi-key writes
+
+#### Prefix Scans
+- **Status:** ✅ Complete (v3)
+- **Implementation:** Range queries over key prefixes
+- **Key Features:**
+  - `PrefixScan(prefix)` - convenience wrapper
+  - Automatic prefix→range bounds conversion
+  - IteratorOptions.Prefix support
+  - Forward and reverse prefix iteration
+
+#### Hot Backup & Restore
+- **Status:** ✅ Complete (v3)
+- **Implementation:** Point-in-time backup with integrity
+- **Key Features:**
+  - `Backup(destDir)` - non-blocking hot backup
+  - `Restore(srcDir, destDir)` - verified restore
+  - SHA-256 checksums for corruption detection
+  - Manifest-based integrity verification
+  - Atomic file copies with temp-then-rename
+
+#### Distributed Replication
+- **Status:** ✅ Complete (v3)
+- **Implementation:** Single-leader WAL shipping
+- **Key Features:**
+  - Leader: accepts writes, ships WAL to followers
+  - Follower: read-only, applies replicated records
+  - HMAC-SHA256 authentication
+  - Automatic reconnection and catch-up
+  - TCP-based streaming protocol
+
 ---
 
 ## System Architecture
@@ -122,7 +169,9 @@
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                         Public API                           │
-│    Engine: Put(k,v) | Get(k) | NewSnapshot() | NewIterator() │
+│    Engine: Put/Get/Delete | NewSnapshot/Iterator            │
+│    Txn: Begin/Commit | PrefixScan | Backup/Restore          │
+│    Replication: Leader/Follower configuration               │
 └─────────────────┬──────────────────────────────────────────────┘
                   │
         ┌─────────┼─────────┐
@@ -156,6 +205,25 @@
                       v
                 Read Queries
             (Merged Iterator)
+```
+
+### Replication Architecture
+
+```
+Leader Node                    Follower Node
+┌─────────────────┐           ┌─────────────────┐
+│   Engine.DB     │           │   Engine.DB     │
+│   ┌─────────┐   │           │   ┌─────────┐   │
+│   │  WAL    │   │           │   │  WAL    │   │
+│   │ append  ├───┼───────────┼──►│ apply   │   │
+│   └─────────┘   │           │   └─────────┘   │
+│   Replication   │           │   Replication   │
+│   Log (ring)    │           │   Applier       │
+└─────────────────┘           └─────────────────┘
+         │                              │
+         v                              v
+    TCP Stream                    Read-Only DB
+    (authenticated)              (catch-up sync)
 ```
 
 ### Write Path (LSM-Inspired)
@@ -1028,12 +1096,10 @@ Done.
 
 1. **No concurrent writes**
    - Single writer via MemTable mutex (future: optimistic concurrency)
-2. **No transactions**
-   - Single-key operations only (future: multi-key ACID)
-3. **Memory usage during compaction**
+2. **Memory usage during compaction**
    - Temporary space for merged data (future: streaming compaction)
-4. **No prefix scans**
-   - Range iterators support exact bounds but no prefix matching
+3. **No column families**
+   - Single keyspace per database (future: multi-tenant support)
 
 ### Future Enhancements
 
@@ -1042,6 +1108,7 @@ Done.
 - [x] Tiered compaction (L0→L1→L2)
 - [x] Configurable compression
 - [x] Incremental B-tree merges
+- [x] Parallel writes via WAL batching
 - [ ] Parallel writes via optimistic locking
 - [ ] Better page cache eviction (LRU)
 - [ ] Streaming compaction to reduce memory usage
@@ -1049,14 +1116,184 @@ Done.
 **Phase 4 (Features):**
 - [x] MVCC snapshots for point-in-time reads
 - [x] Range iterator API (forward/reverse scans)
-- [ ] Multi-key transactions
-- [ ] Prefix scan support
-- [ ] Backup and restore
+- [x] Multi-key transactions with optimistic concurrency control
+- [x] Prefix scan support
+- [x] Hot backup and restore with integrity verification
+- [x] Distributed replication (single-leader WAL shipping)
+- [ ] Column-family / namespace support
+- [ ] Key TTL and time-to-live expiry
 
 **Phase 5 (Advanced):**
-- [ ] Distributed replication
-- [ ] Point-in-time recovery
 - [ ] Monitoring and profiling integration
+- [ ] Prometheus metrics exporter
+- [ ] Block cache (ARC / CLOCK-Pro)
+- [ ] Secondary indexes
+- [ ] Structured query / filter pushdown
+- [ ] Read-your-writes consistency guarantee
+- [ ] Distributed query fan-out
+- [ ] CLI and REPL tool
+- [ ] Structured logging with slog
+- [ ] Pluggable storage backend
+- [ ] Write stall and backpressure
+- [ ] Schema registry and value codec
+- [ ] Compaction priority queue
+- [ ] Chaos / fault-injection testing harness
+- [ ] OpenTelemetry trace spans
+
+---
+
+## Transactions
+
+### Architecture
+
+Transactions implement optimistic concurrency control with the following phases:
+
+1. **Begin**: Snapshot current sequence number as read baseline
+2. **Execute**: Buffer all reads/writes locally in Txn struct
+3. **Validate**: Check if any read-set keys changed since Begin
+4. **Apply**: WAL batch all writes atomically, then update MemTable
+
+### Key Components
+
+#### Txn Struct
+- **snapSeq**: Sequence number at transaction start
+- **reads**: Map of keys read with their sequence numbers
+- **writes**: Buffered mutations (Put/Delete operations)
+- **txnID**: Unique transaction identifier
+
+#### Conflict Detection
+```go
+// Phase 1: Validate read-set
+for each key in reads:
+    currentSeq = store.SeqAt(key, now)
+    if currentSeq > reads[key].seqNum:
+        return ErrTxnConflict
+```
+
+#### Atomic Application
+```go
+// Phase 2: Build WAL batch
+batch = [TxnBegin, mutations..., TxnCommit]
+
+// Phase 3: Apply atomically
+wal.AppendBatch(batch)  // One fsync for entire transaction
+memtable.Apply(ops)     // In-memory updates
+```
+
+### Performance Characteristics
+
+- **Read-Only**: O(1) commit (no I/O)
+- **Small Transactions**: Low overhead, single WAL batch
+- **Conflicts**: Early abort before WAL writes
+- **Large Transactions**: Memory bounded (MaxOps = 10,000)
+
+---
+
+## Replication
+
+### Leader-Follower Architecture
+
+- **Leader**: Accepts writes, ships WAL records to followers
+- **Follower**: Read-only replica, applies leader's writes
+- **Protocol**: TCP-based streaming with HMAC authentication
+
+### Wire Protocol
+
+```
+Handshake:
+  [8] magic (0xF1A5DB00F1A5DB00)
+  [8] fromSeq (follower's last applied seq)
+  [32] HMAC-SHA256(secret, challenge)
+
+Response:
+  [8] magic
+  [1] status (0=OK, 1=resync needed)
+
+Frame:
+  [4] crc32
+  [4] payloadLen
+  [payload] WAL record bytes
+```
+
+### Leader Implementation
+
+```go
+type Leader struct {
+    ring *RingBuffer  // WAL records for shipping
+    streams []Stream  // Connected followers
+}
+
+func (l *Leader) Ship(record WALRecord) {
+    l.ring.Append(record)
+    for each follower:
+        follower.Send(record)
+}
+```
+
+### Follower Implementation
+
+```go
+type Follower struct {
+    conn net.Conn
+    lastSeq uint64
+}
+
+func (f *Follower) Apply(record WALRecord) {
+    if record.SeqNum != f.lastSeq + 1 {
+        // Gap detected, trigger resync
+        f.resync()
+    }
+    db.ApplyWALRecord(record)
+    f.lastSeq = record.SeqNum
+}
+```
+
+### Failure Handling
+
+- **Network Partition**: Automatic reconnection with exponential backoff
+- **Leader Failure**: Manual failover (future: automatic election)
+- **Sequence Gaps**: Full resync using backup package
+- **Authentication**: HMAC prevents unauthorized connections
+
+---
+
+## Backup & Restore
+
+### Hot Backup Process
+
+1. **Flush MemTable**: Ensure all in-memory data is on disk
+2. **Pin Snapshot**: Freeze visible sequence number
+3. **Copy Files**: B-tree files, SSTables, active WAL
+4. **Write Manifest**: JSON with file list and SHA-256 checksums
+
+### Integrity Verification
+
+```go
+type Manifest struct {
+    Version   int
+    CreatedAt time.Time
+    SnapSeq   uint64
+    Files     []FileEntry  // name, size, sha256
+}
+
+// Restore validates all checksums before copying
+for each file in manifest:
+    if !verifySHA256(file) {
+        return ErrCorruptBackup
+    }
+```
+
+### Atomic Operations
+
+- **File Copies**: Temp file + rename for atomicity
+- **Manifest**: Written last as completion marker
+- **Permissions**: Restrictive (0700) for security
+
+### Performance
+
+- **Backup**: O(total bytes) with parallel file copies
+- **Restore**: O(total bytes) with checksum verification
+- **Space**: Minimal overhead (manifest ~1KB + checksums)
 
 ---
 
@@ -1081,6 +1318,6 @@ Done.
 
 ---
 
-**Document Version:** 2.0  
-**Last Updated:** April 19, 2026  
+**Document Version:** 3.0  
+**Last Updated:** April 22, 2026  
 **Maintainer:** Arijit Ghosh
