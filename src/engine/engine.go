@@ -535,6 +535,17 @@ func prefixUpperBound(prefix []byte) []byte {
 // Followers are read-only from the application's perspective; they only
 // accept writes via this path.
 func (db *DB) ApplyWALRecord(r replication.WALRecord) error {
+	// Update our sequence number to match the leader.
+	for {
+		current := db.seq.Load()
+		if r.SeqNum <= current {
+			break
+		}
+		if db.seq.CompareAndSwap(current, r.SeqNum) {
+			break
+		}
+	}
+
 	switch r.Kind {
 	case wal.KindPut:
 		return db.memtable.Put(r.Key, r.Value, r.SeqNum)
@@ -917,6 +928,11 @@ func less(h iterHeap, i, j int) bool {
 	if c != 0 {
 		return c < 0
 	}
+	// For same key, higher sequence number comes first (descending order)
+	if h[i].entry.SeqNum != h[j].entry.SeqNum {
+		return h[i].entry.SeqNum > h[j].entry.SeqNum
+	}
+	// If sequence numbers are equal, use iterator index as tiebreaker
 	return h[i].idx < h[j].idx
 }
 func greater(h iterHeap, i, j int) bool { return less(h, j, i) }

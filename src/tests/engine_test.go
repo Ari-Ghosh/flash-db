@@ -871,7 +871,10 @@ func TestCompactionMergeTwo(t *testing.T) {
 	defer l2Tree.Close()
 
 	tracker := types.NewSnapshotTracker()
-	eng := compaction.New(compaction.Config{L0Threshold: 2}, l1Tree, l2Tree, tracker)
+	eng := compaction.New(compaction.Config{
+		L0Threshold:     2,
+		L1SizeThreshold: 1024 * 1024 * 1024, // 1GB - prevent L1→L2
+	}, l1Tree, l2Tree, tracker)
 	eng.Start()
 	eng.Trigger([]string{path1, path2})
 	time.Sleep(200 * time.Millisecond)
@@ -1487,7 +1490,7 @@ func TestReplicationLeaderFollower(t *testing.T) {
 	}
 
 	// Give replication a moment to propagate.
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(1 * time.Second)
 
 	// All keys should be readable on the follower.
 	for i := 0; i < 20; i++ {

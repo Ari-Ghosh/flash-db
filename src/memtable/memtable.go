@@ -205,8 +205,8 @@ func (m *MemTable) Entries() []types.Entry {
 // concurrent writes are not visible.
 func (m *MemTable) NewIterator(opts types.IteratorOptions) types.Iterator {
 	m.mu.RLock()
-	// Collect a snapshot of entries matching the bounds.
-	var entries []types.Entry
+	// Collect a snapshot of entries matching the bounds, keeping only the latest version of each key.
+	latest := make(map[string]types.Entry)
 	cur := m.head.next[0]
 	for cur != nil {
 		e := cur.entry
@@ -221,14 +221,21 @@ func (m *MemTable) NewIterator(opts types.IteratorOptions) types.Iterator {
 			cur = cur.next[0]
 			continue
 		}
-		if e.Tombstone && !opts.IncludeTombstones {
-			cur = cur.next[0]
-			continue
+		keyStr := string(e.Key)
+		if existing, ok := latest[keyStr]; !ok || e.SeqNum > existing.SeqNum {
+			latest[keyStr] = e
 		}
-		entries = append(entries, e)
 		cur = cur.next[0]
 	}
 	m.mu.RUnlock()
+
+	var entries []types.Entry
+	for _, e := range latest {
+		if e.Tombstone && !opts.IncludeTombstones {
+			continue
+		}
+		entries = append(entries, e)
+	}
 
 	if opts.Reverse {
 		// Reverse the slice for backward iteration.

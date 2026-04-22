@@ -357,7 +357,8 @@ func kWayMerge(readers []*sstable.Reader, oldestPinnedSeq uint64) ([]types.Entry
 	}
 
 	var result []types.Entry
-	var lastKey []byte
+	var currentKey []byte
+	var candidates []types.Entry
 
 	for h.Len() > 0 {
 		item := heap.Pop(h).(heapItem)
@@ -367,17 +368,42 @@ func kWayMerge(readers []*sstable.Reader, oldestPinnedSeq uint64) ([]types.Entry
 			heap.Push(h, heapItem{entry: next, readerIdx: item.readerIdx, ch: item.ch})
 		}
 
-		if lastKey != nil && bytes.Equal(lastKey, e.Key) {
-			continue
+		if currentKey == nil || !bytes.Equal(currentKey, e.Key) {
+			// Emit the best candidate for the previous key
+			if len(candidates) > 0 {
+				best := candidates[0]
+				for _, c := range candidates[1:] {
+					if c.SeqNum > best.SeqNum {
+						best = c
+					}
+				}
+				// Only GC tombstones that are invisible to all live snapshots.
+				if !best.Tombstone || best.SeqNum >= oldestPinnedSeq {
+					result = append(result, best)
+				}
+			}
+			// Start collecting for new key
+			currentKey = make([]byte, len(e.Key))
+			copy(currentKey, e.Key)
+			candidates = candidates[:0]
 		}
-		lastKey = e.Key
 
-		// Only GC tombstones that are invisible to all live snapshots.
-		if e.Tombstone && e.SeqNum < oldestPinnedSeq {
-			continue
-		}
-
-		result = append(result, e)
+		candidates = append(candidates, e)
 	}
+
+	// Emit the last key's best candidate
+	if len(candidates) > 0 {
+		best := candidates[0]
+		for _, c := range candidates[1:] {
+			if c.SeqNum > best.SeqNum {
+				best = c
+			}
+		}
+		// Only GC tombstones that are invisible to all live snapshots.
+		if !best.Tombstone || best.SeqNum >= oldestPinnedSeq {
+			result = append(result, best)
+		}
+	}
+
 	return result, nil
 }

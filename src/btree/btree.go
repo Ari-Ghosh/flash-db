@@ -236,7 +236,8 @@ func (bt *BTree) NewIterator(opts types.IteratorOptions) (types.Iterator, error)
 		return nil, err
 	}
 
-	var entries []types.Entry
+	// Collect entries matching bounds, keeping only the latest version of each key.
+	latest := make(map[string]types.Entry)
 	for _, e := range all {
 		if opts.LowerBound != nil && bytes.Compare(e.Key, opts.LowerBound) < 0 {
 			continue
@@ -247,11 +248,20 @@ func (bt *BTree) NewIterator(opts types.IteratorOptions) (types.Iterator, error)
 		if opts.SnapshotSeq > 0 && e.SeqNum > opts.SnapshotSeq {
 			continue
 		}
+		keyStr := string(e.Key)
+		if existing, ok := latest[keyStr]; !ok || e.SeqNum > existing.SeqNum {
+			latest[keyStr] = e
+		}
+	}
+
+	var entries []types.Entry
+	for _, e := range latest {
 		if e.Tombstone && !opts.IncludeTombstones {
 			continue
 		}
 		entries = append(entries, e)
 	}
+
 	if opts.Reverse {
 		for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
 			entries[i], entries[j] = entries[j], entries[i]

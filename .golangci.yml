@@ -2,11 +2,6 @@ run:
   timeout: 5m
   tests: true
 
-issues:
-  exclude-dirs:
-    - vendor
-    - docs
-
 output:
   formats: colored-line-number
   print-issued-lines: true
@@ -114,13 +109,16 @@ linters-settings:
         yaml: snake
 
 issues:
+  exclude-dirs:
+    - vendor
+    - docs
+
   exclude-rules:
     # Exclude some linters from running on test files
     - path: _test\.go
       linters:
         - gocyclo
         - errcheck
-        - gocognac
         - dupl
         - funlen
 
