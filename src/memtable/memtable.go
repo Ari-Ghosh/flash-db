@@ -205,8 +205,8 @@ func (m *MemTable) Entries() []types.Entry {
 // concurrent writes are not visible.
 func (m *MemTable) NewIterator(opts types.IteratorOptions) types.Iterator {
 	m.mu.RLock()
-	// Collect a snapshot of entries matching the bounds, keeping only the latest version of each key.
-	latest := make(map[string]types.Entry)
+	// Collect all entries matching the bounds.
+	var allEntries []types.Entry
 	cur := m.head.next[0]
 	for cur != nil {
 		e := cur.entry
@@ -221,20 +221,32 @@ func (m *MemTable) NewIterator(opts types.IteratorOptions) types.Iterator {
 			cur = cur.next[0]
 			continue
 		}
-		keyStr := string(e.Key)
-		if existing, ok := latest[keyStr]; !ok || e.SeqNum > existing.SeqNum {
-			latest[keyStr] = e
-		}
+		allEntries = append(allEntries, e)
 		cur = cur.next[0]
 	}
 	m.mu.RUnlock()
 
-	var entries []types.Entry
-	for _, e := range latest {
-		if e.Tombstone && !opts.IncludeTombstones {
-			continue
+	// Group entries by key and keep only the highest sequence number for each key
+	keyMap := make(map[string]*types.Entry)
+	for i := range allEntries {
+		e := &allEntries[i]
+		keyStr := string(e.Key)
+		if existing, ok := keyMap[keyStr]; !ok || e.SeqNum > existing.SeqNum {
+			keyMap[keyStr] = e
 		}
-		entries = append(entries, e)
+	}
+
+	// Build final entries list in sorted order of keys
+	var entries []types.Entry
+	for i := range allEntries {
+		e := &allEntries[i]
+		keyStr := string(e.Key)
+		if candidate := keyMap[keyStr]; candidate == e { // This is the latest version of this key
+			if !(e.Tombstone && !opts.IncludeTombstones) {
+				entries = append(entries, *e)
+			}
+			delete(keyMap, keyStr) // Remove so we don't process again
+		}
 	}
 
 	if opts.Reverse {
