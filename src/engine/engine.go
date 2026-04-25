@@ -130,7 +130,7 @@ type Config struct {
 	Codec              types.Codec
 	// Replication is optional.  When non-nil, the engine registers writes
 	// with the leader for fanout to followers.
-	Replication *replication.Config
+	Replication 	   *replication.Config
 }
 
 // DefaultConfig returns production-sensible defaults.
@@ -174,12 +174,11 @@ type DB struct {
 
 	// flushReady signals FlushSync that a flush completed.
 	flushDone chan struct{}
-	flushMu   sync.Mutex
 }
 
 // Open opens or creates a flashDB at cfg.Dir.
 func Open(cfg Config) (*DB, error) {
-	if err := os.MkdirAll(cfg.Dir, 0755); err != nil {
+	if err := os.MkdirAll(cfg.Dir, 0o755); err != nil {
 		return nil, fmt.Errorf("engine open mkdir: %w", err)
 	}
 	if cfg.MemTableSize == 0 {
@@ -262,7 +261,7 @@ func (db *DB) startReplication(cfg *replication.Config) error {
 		db.follower = f
 		log.Printf("replication: follower connecting to %s", cfg.LeaderAddr)
 	default:
-		return fmt.Errorf("unknown replication role %q", cfg.Role)
+		return fmt.Errorf("unknown replication role %q", cfg.Role) //nolint:err113
 	}
 	return nil
 }
@@ -294,6 +293,23 @@ func (db *DB) SeqAt(key []byte, seqNum uint64) uint64 {
 			return e.SeqNum
 		}
 	}
+	
+	db.l0Mu.Lock()
+	l0Files := make([]string, len(db.l0Files))
+	copy(l0Files, db.l0Files)
+	db.l0Mu.Unlock()
+
+	for i := len(l0Files) - 1; i >= 0; i-- {
+		r, err := sstable.OpenReader(l0Files[i])
+		if err == nil {
+			e, err := r.Get(key)
+			_ = r.Close()
+			if err == nil && e.SeqNum <= seqNum {
+				return e.SeqNum
+			}
+		}
+	}
+
 	if e, err := db.l1Tree.Get(key); err == nil && e.SeqNum <= seqNum {
 		return e.SeqNum
 	}
@@ -337,9 +353,9 @@ func (db *DB) ApplyTxn(txnID, txnSeq uint64, ops []txn.TxnOp) error {
 	// Phase 2: MemTable (in-memory, cannot fail).
 	for _, op := range ops {
 		if op.Tombstone {
-			db.memtable.Delete(op.Key, op.SeqNum)
+			_ = db.memtable.Delete(op.Key, op.SeqNum)
 		} else {
-			db.memtable.Put(op.Key, op.Value, op.SeqNum)
+			_ = db.memtable.Put(op.Key, op.Value, op.SeqNum)
 		}
 	}
 
@@ -440,6 +456,26 @@ func (db *DB) GetAt(key []byte, seqNum uint64) ([]byte, error) {
 			return e.Value, nil
 		}
 	}
+
+	db.l0Mu.Lock()
+	l0Files := make([]string, len(db.l0Files))
+	copy(l0Files, db.l0Files)
+	db.l0Mu.Unlock()
+
+	for i := len(l0Files) - 1; i >= 0; i-- {
+		r, err := sstable.OpenReader(l0Files[i])
+		if err == nil {
+			e, err := r.Get(key)
+			_ = r.Close()
+			if err == nil && e.SeqNum <= seqNum {
+				if e.Tombstone {
+					return nil, types.ErrKeyDeleted
+				}
+				return e.Value, nil
+			}
+		}
+	}
+
 	if e, err := db.l1Tree.Get(key); err == nil && e.SeqNum <= seqNum {
 		if e.Tombstone {
 			return nil, types.ErrKeyDeleted
@@ -484,9 +520,27 @@ func (db *DB) NewIterator(opts types.IteratorOptions) (types.Iterator, error) {
 	imm := db.imm
 	db.writeMu.Unlock()
 
-	var immIt types.Iterator
+	var iters []types.Iterator
+	iters = append(iters, memIt)
+	
 	if imm != nil {
-		immIt = imm.NewIterator(opts)
+		iters = append(iters, imm.NewIterator(opts))
+	}
+
+	db.l0Mu.Lock()
+	l0Files := make([]string, len(db.l0Files))
+	copy(l0Files, db.l0Files)
+	db.l0Mu.Unlock()
+
+	for i := len(l0Files) - 1; i >= 0; i-- {
+		r, err := sstable.OpenReader(l0Files[i])
+		if err == nil {
+			it, err := r.NewIterator(opts)
+			_ = r.Close()
+			if err == nil {
+				iters = append(iters, it)
+			}
+		}
 	}
 
 	l1It, err := db.l1Tree.NewIterator(opts)
@@ -498,10 +552,7 @@ func (db *DB) NewIterator(opts types.IteratorOptions) (types.Iterator, error) {
 		return nil, fmt.Errorf("iterator l2: %w", err)
 	}
 
-	iters := []types.Iterator{memIt, l1It, l2It}
-	if immIt != nil {
-		iters = append([]types.Iterator{memIt, immIt}, iters[1:]...)
-	}
+	iters = append(iters, l1It, l2It)
 	return newMergedIterator(iters, opts.Reverse), nil
 }
 
@@ -509,7 +560,7 @@ func (db *DB) NewIterator(opts types.IteratorOptions) (types.Iterator, error) {
 // It is a convenience wrapper around NewIterator with IteratorOptions.Prefix set.
 func (db *DB) PrefixScan(prefix []byte) (types.Iterator, error) {
 	if len(prefix) == 0 {
-		return nil, fmt.Errorf("prefix must not be empty")
+		return nil, fmt.Errorf("prefix must not be empty") //nolint:err113
 	}
 	return db.NewIterator(types.IteratorOptions{Prefix: prefix})
 }
@@ -579,9 +630,7 @@ func (db *DB) BackupFiles() []string {
 	}
 	// L0 SSTables.
 	db.l0Mu.Lock()
-	for _, p := range db.l0Files {
-		files = append(files, p)
-	}
+	files = append(files, db.l0Files...)
 	db.l0Mu.Unlock()
 	// Active WAL.
 	files = append(files, db.walActive.Path())
@@ -643,7 +692,7 @@ func (db *DB) flushImmutable() error {
 	seq := db.seq.Load()
 	path := filepath.Join(db.cfg.Dir, fmt.Sprintf("l0_%020d.sst", seq))
 
-	w, err := sstable.NewWriter(path, uint(len(entries)))
+	w, err := sstable.NewWriter(path, uint(len(entries))) //nolint:gosec
 	if err != nil {
 		return err
 	}
@@ -691,9 +740,9 @@ func (db *DB) replayWAL(w *wal.WAL) error {
 		}
 		switch r.Kind {
 		case wal.KindPut:
-			db.memtable.Put(r.Key, r.Value, r.SeqNum)
+			_ = db.memtable.Put(r.Key, r.Value, r.SeqNum)
 		case wal.KindDelete:
-			db.memtable.Delete(r.Key, r.SeqNum)
+			_ = db.memtable.Delete(r.Key, r.SeqNum)
 		}
 	}
 	db.seq.Store(maxSeq)
@@ -711,13 +760,15 @@ func (db *DB) rotateWAL() {
 		return
 	}
 	db.walActive = newWAL
-	go oldWAL.Delete()
+	go func() { _ = oldWAL.Delete() }()
 }
 
 func (db *DB) discoverL0Files() {
-	matches, _ := filepath.Glob(filepath.Join(db.cfg.Dir, "l0_*.sst"))
-	sort.Strings(matches)
-	db.l0Files = matches
+	matches, err := filepath.Glob(filepath.Join(db.cfg.Dir, "l0_*.sst"))
+	if err == nil {
+		sort.Strings(matches)
+		db.l0Files = matches
+	}
 }
 
 func (db *DB) checkClosed() error {
@@ -877,7 +928,7 @@ func (mi *mergedIterator) Next()             { mi.advance() }
 func (mi *mergedIterator) Prev()             {}
 func (mi *mergedIterator) Close() error {
 	for _, it := range mi.iters {
-		it.Close()
+		_ = it.Close()
 	}
 	return nil
 }

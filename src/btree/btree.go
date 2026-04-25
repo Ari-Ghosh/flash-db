@@ -347,7 +347,10 @@ func (bt *BTree) buildInternalLevel(childIDs []uint64) []uint64 {
 		chunk := childIDs[i:end]
 		ip := &page{pageType: typeInternal, dirty: true}
 		for j := range chunk[:len(chunk)-1] {
-			child, _ := bt.readPage(childIDs[i+j+1])
+			child, err := bt.readPage(childIDs[i+j+1])
+			if err != nil {
+				continue
+			}
 			var sepKey []byte
 			if child.pageType == typeLeaf && len(child.leaves) > 0 {
 				sepKey = child.leaves[0].key

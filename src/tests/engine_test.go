@@ -52,6 +52,8 @@
 package tests
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -119,7 +121,7 @@ func mustGet(t *testing.T, db *engine.DB, k, want string) {
 func mustNotFound(t *testing.T, db *engine.DB, k string) {
 	t.Helper()
 	_, err := db.Get([]byte(k))
-	if err != types.ErrKeyNotFound && err != types.ErrKeyDeleted {
+	if !errors.Is(err, types.ErrKeyNotFound) && !errors.Is(err, types.ErrKeyDeleted) {
 		t.Fatalf("Get(%q) = %v, want ErrKeyNotFound/ErrKeyDeleted", k, err)
 	}
 }
@@ -201,7 +203,7 @@ func TestWALRecoveryAfterDelete(t *testing.T) {
 	db := openDB(t, dir)
 
 	mustPut(t, db, "del", "me")
-	db.Delete([]byte("del"))
+	_ = db.Delete([]byte("del"))
 	db.Close()
 
 	db2 := openDB(t, dir)
@@ -280,7 +282,7 @@ func TestSnapshotNotAffectedByDelete(t *testing.T) {
 	snap := db.NewSnapshot()
 	defer snap.Release()
 
-	db.Delete([]byte("gone"))
+	_ = db.Delete([]byte("gone"))
 
 	// Snapshot should still see "here".
 	v, err := db.GetSnapshot(snap, []byte("gone"))
@@ -408,7 +410,6 @@ func TestIteratorReverse(t *testing.T) {
 		got = append(got, string(iter.Key()))
 		iter.Next()
 	}
-	// Should be in reverse order.
 	for i := 0; i < len(got)-1; i++ {
 		if got[i] < got[i+1] {
 			t.Fatalf("not reversed: %v", got)
@@ -423,7 +424,7 @@ func TestIteratorSkipsTombstones(t *testing.T) {
 	mustPut(t, db, "a", "1")
 	mustPut(t, db, "b", "2")
 	mustPut(t, db, "c", "3")
-	db.Delete([]byte("b"))
+	_ = db.Delete([]byte("b"))
 
 	iter, err := db.NewIterator(types.IteratorOptions{})
 	if err != nil {
@@ -516,7 +517,7 @@ func TestConcurrentPutGet(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			db.Put([]byte(fmt.Sprintf("ck%d", i)), []byte("v"))
+			_ = db.Put([]byte(fmt.Sprintf("ck%d", i)), []byte("v"))
 		}()
 	}
 	// Readers — should not panic or data-race.
@@ -525,7 +526,7 @@ func TestConcurrentPutGet(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			db.Get([]byte(fmt.Sprintf("ck%d", i)))
+			_, _ = db.Get([]byte(fmt.Sprintf("ck%d", i)))
 		}()
 	}
 	wg.Wait()
@@ -544,7 +545,7 @@ func TestTombstoneGCAfterCompaction(t *testing.T) {
 	}
 	time.Sleep(200 * time.Millisecond)
 
-	db.Delete([]byte("tgc"))
+	_ = db.Delete([]byte("tgc"))
 	for i := 2000; i < 4000; i++ {
 		mustPut(t, db, fmt.Sprintf("filler%05d", i), "x")
 	}
@@ -580,7 +581,7 @@ func TestWALBatchThroughput(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			db.Put([]byte(fmt.Sprintf("bk%d", i)), []byte("val"))
+			_ = db.Put([]byte(fmt.Sprintf("bk%d", i)), []byte("val"))
 		}()
 	}
 	wg.Wait()
@@ -652,9 +653,9 @@ func TestWALRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.AppendPut(1, []byte("key1"), []byte("val1"))
-	w.AppendPut(2, []byte("key2"), []byte("val2"))
-	w.AppendDelete(3, []byte("key1"))
+	_ = w.AppendPut(1, []byte("key1"), []byte("val1"))
+	_ = w.AppendPut(2, []byte("key2"), []byte("val2"))
+	_ = w.AppendDelete(3, []byte("key1"))
 	w.Close()
 
 	w2, _ := wal.Open(path)
@@ -679,13 +680,13 @@ func TestWALCRCCorruption(t *testing.T) {
 	path := filepath.Join(dir, "wal.log")
 
 	w, _ := wal.Open(path)
-	w.AppendPut(1, []byte("k"), []byte("v"))
+	_ = w.AppendPut(1, []byte("k"), []byte("v"))
 	w.Close()
 
 	// Corrupt a byte in the middle.
 	data, _ := os.ReadFile(path)
 	data[len(data)/2] ^= 0xFF
-	os.WriteFile(path, data, 0644)
+	_ = os.WriteFile(path, data, 0o644)
 
 	w2, _ := wal.Open(path)
 	recs, err := w2.Replay()
@@ -699,9 +700,9 @@ func TestWALCRCCorruption(t *testing.T) {
 
 func TestMemTableIterator(t *testing.T) {
 	mt := memtable.New(1 << 20)
-	mt.Put([]byte("c"), []byte("3"), 3)
-	mt.Put([]byte("a"), []byte("1"), 1)
-	mt.Put([]byte("b"), []byte("2"), 2)
+	_ = mt.Put([]byte("c"), []byte("3"), 3)
+	_ = mt.Put([]byte("a"), []byte("1"), 1)
+	_ = mt.Put([]byte("b"), []byte("2"), 2)
 
 	iter := mt.NewIterator(types.IteratorOptions{})
 	var keys []string
@@ -709,7 +710,7 @@ func TestMemTableIterator(t *testing.T) {
 		keys = append(keys, string(iter.Key()))
 		iter.Next()
 	}
-	iter.Close()
+	_ = iter.Close()
 
 	if !sort.StringsAreSorted(keys) {
 		t.Fatalf("memtable iterator not sorted: %v", keys)
@@ -721,8 +722,8 @@ func TestMemTableIterator(t *testing.T) {
 
 func TestMemTableSnapshotFilter(t *testing.T) {
 	mt := memtable.New(1 << 20)
-	mt.Put([]byte("k"), []byte("early"), 1)
-	mt.Put([]byte("k2"), []byte("late"), 5)
+	_ = mt.Put([]byte("k"), []byte("early"), 1)
+	_ = mt.Put([]byte("k2"), []byte("late"), 5)
 
 	iter := mt.NewIterator(types.IteratorOptions{SnapshotSeq: 3})
 	var keys []string
@@ -730,7 +731,7 @@ func TestMemTableSnapshotFilter(t *testing.T) {
 		keys = append(keys, string(iter.Key()))
 		iter.Next()
 	}
-	iter.Close()
+	_ = iter.Close()
 
 	for _, k := range keys {
 		if k == "k2" {
@@ -772,7 +773,7 @@ func TestBTreeBulkLoad(t *testing.T) {
 		entries = append(entries, types.Entry{
 			Key:    []byte(fmt.Sprintf("k%04d", i)),
 			Value:  []byte(fmt.Sprintf("v%d", i)),
-			SeqNum: uint64(i + 1),
+			SeqNum: uint64(i + 1), //nolint:gosec // safe in tests
 		})
 	}
 
@@ -785,7 +786,7 @@ func TestBTreeBulkLoad(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Get(%q): %v", e.Key, err)
 		}
-		if string(got.Value) != string(e.Value) {
+		if !bytes.Equal(got.Value, e.Value) {
 			t.Fatalf("Get(%q) = %q, want %q", e.Key, got.Value, e.Value)
 		}
 	}
@@ -803,7 +804,7 @@ func TestBTreeAllEntries(t *testing.T) {
 			Value: []byte("v"),
 		})
 	}
-	bt.BulkLoad(entries)
+	_ = bt.BulkLoad(entries)
 
 	all, err := bt.AllEntries()
 	if err != nil {
@@ -826,7 +827,7 @@ func TestBTreeIterator(t *testing.T) {
 			Value: []byte("v"),
 		})
 	}
-	bt.BulkLoad(entries)
+	_ = bt.BulkLoad(entries)
 
 	iter, err := bt.NewIterator(types.IteratorOptions{
 		LowerBound: []byte("03"),
@@ -856,13 +857,13 @@ func TestCompactionMergeTwo(t *testing.T) {
 	path2 := filepath.Join(dir, "l0_2.sst")
 
 	w1, _ := sstable.NewWriter(path1, 5)
-	w1.Add(types.Entry{Key: []byte("a"), Value: []byte("old"), SeqNum: 1})
-	w1.Add(types.Entry{Key: []byte("b"), Value: []byte("b1"), SeqNum: 1})
+	_ = w1.Add(types.Entry{Key: []byte("a"), Value: []byte("old"), SeqNum: 1})
+	_ = w1.Add(types.Entry{Key: []byte("b"), Value: []byte("b1"), SeqNum: 1})
 	w1.Close()
 
 	w2, _ := sstable.NewWriter(path2, 5)
-	w2.Add(types.Entry{Key: []byte("a"), Value: []byte("new"), SeqNum: 5})
-	w2.Add(types.Entry{Key: []byte("c"), Value: []byte("c1"), SeqNum: 5})
+	_ = w2.Add(types.Entry{Key: []byte("a"), Value: []byte("new"), SeqNum: 5})
+	_ = w2.Add(types.Entry{Key: []byte("c"), Value: []byte("c1"), SeqNum: 5})
 	w2.Close()
 
 	l1Tree, _ := btree.Open(filepath.Join(dir, "l1.bt"))
@@ -873,7 +874,7 @@ func TestCompactionMergeTwo(t *testing.T) {
 	tracker := types.NewSnapshotTracker()
 	eng := compaction.New(compaction.Config{
 		L0Threshold:     2,
-		L1SizeThreshold: 1024 * 1024 * 1024, // 1GB - prevent L1→L2
+		L1SizeThreshold: 1024 * 1024 * 1024,
 	}, l1Tree, l2Tree, tracker)
 	eng.Start()
 	eng.Trigger([]string{path1, path2})
@@ -996,7 +997,7 @@ func BenchmarkWALGroupCommit(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			db.Put([]byte(fmt.Sprintf("bk%d", i)), []byte("v"))
+			_ = db.Put([]byte(fmt.Sprintf("bk%d", i)), []byte("v"))
 			i++
 		}
 	})
@@ -1025,8 +1026,8 @@ func TestTxnRollback(t *testing.T) {
 	mustPut(t, db, "k", "original")
 
 	tx := db.Begin()
-	tx.Put([]byte("k"), []byte("modified"))
-	tx.Rollback()
+	_ = tx.Put([]byte("k"), []byte("modified"))
+	_ = tx.Rollback()
 
 	mustGet(t, db, "k", "original")
 }
@@ -1034,13 +1035,13 @@ func TestTxnRollback(t *testing.T) {
 func TestTxnReadYourWrites(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	tx := db.Begin()
-	tx.Put([]byte("ryw"), []byte("seen"))
+	_ = tx.Put([]byte("ryw"), []byte("seen"))
 
 	v, err := tx.Get([]byte("ryw"))
 	if err != nil || string(v) != "seen" {
 		t.Fatalf("read-your-writes: got %q %v", v, err)
 	}
-	tx.Rollback()
+	_ = tx.Rollback()
 }
 
 func TestTxnConflictDetection(t *testing.T) {
@@ -1048,7 +1049,7 @@ func TestTxnConflictDetection(t *testing.T) {
 	mustPut(t, db, "contested", "v0")
 
 	tx := db.Begin()
-	_, err := tx.Get([]byte("contested")) // read into read-set
+	_, err := tx.Get([]byte("contested"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1056,12 +1057,12 @@ func TestTxnConflictDetection(t *testing.T) {
 	// Concurrent writer mutates the key before tx commits.
 	mustPut(t, db, "contested", "v1")
 
-	tx.Put([]byte("contested"), []byte("v2"))
+	_ = tx.Put([]byte("contested"), []byte("v2"))
 	err = tx.Commit()
 	if err == nil {
 		t.Fatal("expected ErrTxnConflict, got nil")
 	}
-	if err != txn.ErrTxnConflict {
+	if !errors.Is(err, txn.ErrTxnConflict) {
 		// Accept wrapped errors too.
 		t.Logf("conflict error: %v", err)
 	}
@@ -1082,8 +1083,8 @@ func TestTxnAtomicTransferReadBack(t *testing.T) {
 	if string(aVal) != "1000" || string(bVal) != "500" {
 		t.Fatalf("unexpected initial values: alice=%s bob=%s", aVal, bVal)
 	}
-	tx.Put([]byte("alice"), []byte("900"))
-	tx.Put([]byte("bob"), []byte("600"))
+	_ = tx.Put([]byte("alice"), []byte("900"))
+	_ = tx.Put([]byte("bob"), []byte("600"))
 
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("Commit transfer: %v", err)
@@ -1097,7 +1098,7 @@ func TestTxnDeleteInTransaction(t *testing.T) {
 	mustPut(t, db, "todel", "here")
 
 	tx := db.Begin()
-	tx.Delete([]byte("todel"))
+	_ = tx.Delete([]byte("todel"))
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
@@ -1107,9 +1108,9 @@ func TestTxnDeleteInTransaction(t *testing.T) {
 func TestTxnDoubleCommitReturnsError(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	tx := db.Begin()
-	tx.Put([]byte("k"), []byte("v"))
-	tx.Commit()
-	if err := tx.Commit(); err != txn.ErrTxnClosed {
+	_ = tx.Put([]byte("k"), []byte("v"))
+	_ = tx.Commit()
+	if err := tx.Commit(); !errors.Is(err, txn.ErrTxnClosed) {
 		t.Fatalf("expected ErrTxnClosed on second Commit, got %v", err)
 	}
 }
@@ -1121,7 +1122,7 @@ func TestTxnOversizeKeyRejected(t *testing.T) {
 	if err := tx.Put(bigKey, []byte("v")); err == nil {
 		t.Fatal("expected error for oversized key")
 	}
-	tx.Rollback()
+	_ = tx.Rollback()
 }
 
 func TestTxnMaxOpsEnforced(t *testing.T) {
@@ -1131,10 +1132,10 @@ func TestTxnMaxOpsEnforced(t *testing.T) {
 	for i := 0; i <= txn.MaxOps+1; i++ {
 		lastErr = tx.Put([]byte(fmt.Sprintf("k%d", i)), []byte("v"))
 	}
-	if lastErr != txn.ErrTxnTooLarge {
+	if !errors.Is(lastErr, txn.ErrTxnTooLarge) {
 		t.Fatalf("expected ErrTxnTooLarge after %d ops, got %v", txn.MaxOps, lastErr)
 	}
-	tx.Rollback()
+	_ = tx.Rollback()
 }
 
 func TestTxnWALReplay(t *testing.T) {
@@ -1142,8 +1143,8 @@ func TestTxnWALReplay(t *testing.T) {
 	db := openDB(t, dir)
 
 	tx := db.Begin()
-	tx.Put([]byte("tx:a"), []byte("1"))
-	tx.Put([]byte("tx:b"), []byte("2"))
+	_ = tx.Put([]byte("tx:a"), []byte("1"))
+	_ = tx.Put([]byte("tx:b"), []byte("2"))
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
@@ -1167,7 +1168,7 @@ func TestTxnConcurrentNonConflicting(t *testing.T) {
 			defer wg.Done()
 			tx := db.Begin()
 			for i := 0; i < 10; i++ {
-				tx.Put([]byte(fmt.Sprintf("g%d:k%d", g, i)), []byte("v"))
+				_ = tx.Put([]byte(fmt.Sprintf("g%d:k%d", g, i)), []byte("v"))
 			}
 			if err := tx.Commit(); err != nil {
 				errs <- err
@@ -1242,8 +1243,8 @@ func TestPrefixScanAllFFBytes(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	ffKey := []byte{0xFF, 0x01}
 	otherKey := []byte{0xFE, 0x00}
-	db.Put(ffKey, []byte("ff"))
-	db.Put(otherKey, []byte("other"))
+	_ = db.Put(ffKey, []byte("ff"))
+	_ = db.Put(otherKey, []byte("other"))
 
 	iter, err := db.NewIterator(types.IteratorOptions{Prefix: []byte{0xFF}})
 	if err != nil {
@@ -1284,7 +1285,7 @@ func TestPrefixScanSkipsTombstones(t *testing.T) {
 	mustPut(t, db, "ns:a", "1")
 	mustPut(t, db, "ns:b", "2")
 	mustPut(t, db, "ns:c", "3")
-	db.Delete([]byte("ns:b"))
+	_ = db.Delete([]byte("ns:b"))
 
 	iter, err := db.PrefixScan([]byte("ns:"))
 	if err != nil {
@@ -1382,7 +1383,7 @@ func TestBackupManifestChecksums(t *testing.T) {
 	data, _ := os.ReadFile(targetFile)
 	if len(data) > 0 {
 		data[len(data)/2] ^= 0xFF
-		os.WriteFile(targetFile, data, 0600)
+		_ = os.WriteFile(targetFile, data, 0o600)
 	}
 
 	restoreDir := tmpDir(t)
@@ -1400,11 +1401,11 @@ func TestBackupRejectsNonEmptyDest(t *testing.T) {
 
 	db := openDB(t, srcDir)
 	mustPut(t, db, "k", "v")
-	db.Backup(backupDir)
+	_, _ = db.Backup(backupDir)
 	db.Close()
 
 	// Create a file in restoreDir so it's non-empty.
-	os.WriteFile(filepath.Join(restoreDir, "existing.txt"), []byte("data"), 0600)
+	_ = os.WriteFile(filepath.Join(restoreDir, "existing.txt"), []byte("data"), 0o600)
 	err := backup.Restore(backupDir, restoreDir)
 	if err == nil {
 		t.Fatal("Restore should reject non-empty destination")
@@ -1417,7 +1418,7 @@ func TestBackupManifestReadable(t *testing.T) {
 
 	db := openDB(t, srcDir)
 	mustPut(t, db, "manifest-test", "ok")
-	db.Backup(backupDir)
+	_, _ = db.Backup(backupDir)
 	db.Close()
 
 	m, err := backup.ReadManifest(backupDir)
@@ -1562,7 +1563,7 @@ func TestBasicCRUDRegression(t *testing.T) {
 	mustGet(t, db, "hello", "world")
 	mustPut(t, db, "hello", "updated")
 	mustGet(t, db, "hello", "updated")
-	db.Delete([]byte("hello"))
+	_ = db.Delete([]byte("hello"))
 	mustNotFound(t, db, "hello")
 }
 
@@ -1625,7 +1626,7 @@ func BenchmarkPut(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		db.Put([]byte(fmt.Sprintf("bk%d", i)), []byte("value"))
+		_ = db.Put([]byte(fmt.Sprintf("bk%d", i)), []byte("value"))
 	}
 }
 
@@ -1637,12 +1638,12 @@ func BenchmarkGet(b *testing.B) {
 	defer db.Close()
 
 	for i := 0; i < 10000; i++ {
-		db.Put([]byte(fmt.Sprintf("k%d", i)), []byte("v"))
+		_ = db.Put([]byte(fmt.Sprintf("k%d", i)), []byte("v"))
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		db.Get([]byte(fmt.Sprintf("k%d", i%10000)))
+		_, _ = db.Get([]byte(fmt.Sprintf("k%d", i%10000)))
 	}
 }
 
@@ -1654,7 +1655,7 @@ func BenchmarkIterator(b *testing.B) {
 	defer db.Close()
 
 	for i := 0; i < 1000; i++ {
-		db.Put([]byte(fmt.Sprintf("k%05d", i)), []byte("v"))
+		_ = db.Put([]byte(fmt.Sprintf("k%05d", i)), []byte("v"))
 	}
 
 	b.ResetTimer()
@@ -1663,6 +1664,6 @@ func BenchmarkIterator(b *testing.B) {
 		for iter.Valid() {
 			iter.Next()
 		}
-		iter.Close()
+		_ = iter.Close()
 	}
 }

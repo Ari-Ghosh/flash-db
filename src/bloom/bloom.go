@@ -150,14 +150,14 @@ func optimalK(m, n uint) uint {
 // baseHashes returns two 64-bit hashes for the Kirsch-Mitzenmacher trick.
 // We use FNV-like mixing to avoid importing crypto packages.
 func baseHashes(key []byte) (uint64, uint64) {
-	var h1, h2 uint64 = 14695981039346656037, 1099511628211
+	var h1 uint64 = 14695981039346656037
 
 	for _, b := range key {
 		h1 ^= uint64(b)
 		h1 *= 1099511628211
 	}
 	// second independent hash via a different seed
-	h2 = h1 ^ 0x9e3779b97f4a7c15
+	h2 := h1 ^ 0x9e3779b97f4a7c15
 	h2 ^= h2 >> 30
 	h2 *= 0xbf58476d1ce4e5b9
 	h2 ^= h2 >> 27

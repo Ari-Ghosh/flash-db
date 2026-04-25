@@ -71,7 +71,7 @@ type BackupSource interface {
 // Returns the manifest of what was backed up.
 func Run(src BackupSource, destDir string) (*Manifest, error) {
 	// Create destination with restrictive permissions.
-	if err := os.MkdirAll(destDir, 0700); err != nil {
+	if err := os.MkdirAll(destDir, 0o700); err != nil {
 		return nil, fmt.Errorf("backup: create dest %s: %w", destDir, err)
 	}
 
@@ -128,13 +128,13 @@ func Restore(srcDir, destDir string) error {
 
 	// Guard against overwriting an existing DB.
 	if fi, err := os.Stat(destDir); err == nil && fi.IsDir() {
-		des, _ := os.ReadDir(destDir)
-		if len(des) > 0 {
+		des, err := os.ReadDir(destDir)
+		if err == nil && len(des) > 0 {
 			return fmt.Errorf("restore: destination %s is not empty — remove it first", destDir)
 		}
 	}
 
-	if err := os.MkdirAll(destDir, 0700); err != nil {
+	if err := os.MkdirAll(destDir, 0o700); err != nil {
 		return fmt.Errorf("restore: create dest: %w", err)
 	}
 
@@ -179,7 +179,7 @@ func copyFile(srcPath, destDir string) (FileEntry, error) {
 	defer src.Close()
 
 	tmpPath := filepath.Join(destDir, base+".tmp")
-	dst, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	dst, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return FileEntry{}, err
 	}
@@ -189,13 +189,13 @@ func copyFile(srcPath, destDir string) (FileEntry, error) {
 	n, err := io.Copy(mw, src)
 	dst.Close()
 	if err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return FileEntry{}, err
 	}
 
 	finalPath := safeJoin(destDir, base)
 	if err := os.Rename(tmpPath, finalPath); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return FileEntry{}, err
 	}
 
@@ -212,7 +212,7 @@ func writeManifest(destDir string, m *Manifest) error {
 		return err
 	}
 	tmpPath := filepath.Join(destDir, manifestName+".tmp")
-	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmpPath, filepath.Join(destDir, manifestName))

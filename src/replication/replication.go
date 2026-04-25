@@ -254,7 +254,7 @@ func (l *Leader) handleFollower(conn net.Conn) {
 				log.Printf("replication: encode error: %v", err)
 				return
 			}
-			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if _, err := conn.Write(frame); err != nil {
 				return
 			}
@@ -268,7 +268,7 @@ func (l *Leader) authenticate(conn net.Conn) error {
 	if _, err := rand.Read(challenge); err != nil {
 		return err
 	}
-	conn.SetDeadline(time.Now().Add(10 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 	if _, err := conn.Write(challenge); err != nil {
 		return err
 	}
@@ -282,7 +282,7 @@ func (l *Leader) authenticate(conn net.Conn) error {
 	if !hmac.Equal(resp, expected) {
 		return ErrAuthFailed
 	}
-	conn.SetDeadline(time.Time{}) // clear deadline
+	_ = conn.SetDeadline(time.Time{}) // clear deadline
 	return nil
 }
 
@@ -360,7 +360,7 @@ func (f *Follower) runOnce() error {
 
 	// Auth: read challenge, send HMAC response.
 	challenge := make([]byte, challengeBytes)
-	conn.SetDeadline(time.Now().Add(10 * time.Second))
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 	if _, err := io.ReadFull(conn, challenge); err != nil {
 		return fmt.Errorf("read challenge: %w", err)
 	}
@@ -388,7 +388,7 @@ func (f *Follower) runOnce() error {
 		return err
 	}
 
-	conn.SetDeadline(time.Time{})
+	_ = conn.SetDeadline(time.Time{})
 	f.connected.Store(true)
 	log.Printf("replication follower: connected to %s (fromSeq=%d)", f.cfg.LeaderAddr, f.lastSeq.Load())
 
@@ -400,7 +400,7 @@ func (f *Follower) runOnce() error {
 		default:
 		}
 
-		conn.SetReadDeadline(time.Now().Add(15 * time.Second))
+		_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
 		r, err := decodeFrame(conn)
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
