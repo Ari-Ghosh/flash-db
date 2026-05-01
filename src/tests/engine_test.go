@@ -1871,8 +1871,6 @@ func TestSSTWriterWithFPR(t *testing.T) {
 	}
 }
 
-
-
 func BenchmarkPut(b *testing.B) {
 	dir, _ := os.MkdirTemp("", "bench_*")
 	defer os.RemoveAll(dir)

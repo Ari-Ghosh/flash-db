@@ -19,7 +19,7 @@
 // - **Crash Recovery**: WAL replay on restart.
 //
 // ## version Changes
-// 
+//
 // ### v1 (Original Demo)
 // - Basic Put/Get/Delete operations.
 // - No snapshots or iterators.

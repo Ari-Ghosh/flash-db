@@ -136,7 +136,7 @@ type Config struct {
 	BloomFPRMax    float64 // upper bound (default 0.05  = 5%)
 	// Replication is optional.  When non-nil, the engine registers writes
 	// with the leader for fanout to followers.
-	Replication 	   *replication.Config
+	Replication *replication.Config
 }
 
 // DefaultConfig returns production-sensible defaults.
@@ -314,7 +314,7 @@ func (db *DB) SeqAt(key []byte, seqNum uint64) uint64 {
 			return e.SeqNum
 		}
 	}
-	
+
 	db.l0Mu.Lock()
 	l0Files := make([]string, len(db.l0Files))
 	copy(l0Files, db.l0Files)
@@ -558,7 +558,7 @@ func (db *DB) NewIterator(opts types.IteratorOptions) (types.Iterator, error) {
 
 	var iters []types.Iterator
 	iters = append(iters, memIt)
-	
+
 	if imm != nil {
 		iters = append(iters, imm.NewIterator(opts))
 	}
@@ -892,10 +892,10 @@ type Stats struct {
 
 // BloomFilterStats holds aggregate bloom filter telemetry.
 type BloomFilterStats struct {
-	TotalQueries       uint64
+	TotalQueries        uint64
 	TotalFalsePositives uint64
-	ObservedFPR        float64
-	CurrentTargetFPR   float64 // what the next SSTable will use
+	ObservedFPR         float64
+	CurrentTargetFPR    float64 // what the next SSTable will use
 }
 
 // BloomStats returns aggregate bloom filter false-positive telemetry and
@@ -907,10 +907,10 @@ func (db *DB) BloomStats() BloomFilterStats {
 		observed = float64(fp) / float64(q)
 	}
 	return BloomFilterStats{
-		TotalQueries:       q,
+		TotalQueries:        q,
 		TotalFalsePositives: fp,
-		ObservedFPR:        observed,
-		CurrentTargetFPR:   db.bloomTelemetry.Recommend(db.cfg.BloomFPRTarget, db.cfg.BloomFPRMin, db.cfg.BloomFPRMax),
+		ObservedFPR:         observed,
+		CurrentTargetFPR:    db.bloomTelemetry.Recommend(db.cfg.BloomFPRTarget, db.cfg.BloomFPRMin, db.cfg.BloomFPRMax),
 	}
 }
 

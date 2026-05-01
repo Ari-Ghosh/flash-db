@@ -1,6 +1,6 @@
 // Package replication implements single-leader WAL-shipping replication.
 //
-// Implemented in v3
+// # Implemented in v3
 //
 // Architecture:
 //
@@ -63,11 +63,11 @@ var le = binary.LittleEndian
 
 // Errors
 var (
-	ErrAuthFailed      = errors.New("replication: authentication failed")
-	ErrProtocolMagic   = errors.New("replication: bad protocol magic")
-	ErrFrameTooLarge   = errors.New("replication: frame exceeds max size")
+	ErrAuthFailed       = errors.New("replication: authentication failed")
+	ErrProtocolMagic    = errors.New("replication: bad protocol magic")
+	ErrFrameTooLarge    = errors.New("replication: frame exceeds max size")
 	ErrChecksumMismatch = errors.New("replication: frame checksum mismatch")
-	ErrReadOnly        = errors.New("replication: follower is read-only")
+	ErrReadOnly         = errors.New("replication: follower is read-only")
 )
 
 // Config configures a replication node.
@@ -119,13 +119,13 @@ type Applier interface {
 
 // Leader accepts follower connections and fans out WAL records.
 type Leader struct {
-	cfg      Config
-	ln       net.Listener
-	mu       sync.RWMutex
+	cfg       Config
+	ln        net.Listener
+	mu        sync.RWMutex
 	followers map[string]*followerConn // addr → conn
-	ring     *ringBuffer
-	stopCh   chan struct{}
-	wg       sync.WaitGroup
+	ring      *ringBuffer
+	stopCh    chan struct{}
+	wg        sync.WaitGroup
 }
 
 // NewLeader creates a Leader node (does not start listening yet).
@@ -290,12 +290,12 @@ func (l *Leader) authenticate(conn net.Conn) error {
 
 // Follower connects to the leader and applies incoming WAL records.
 type Follower struct {
-	cfg        Config
-	applier    Applier
-	stopCh     chan struct{}
-	wg         sync.WaitGroup
-	lastSeq    atomic.Uint64
-	connected  atomic.Bool
+	cfg       Config
+	applier   Applier
+	stopCh    chan struct{}
+	wg        sync.WaitGroup
+	lastSeq   atomic.Uint64
+	connected atomic.Bool
 }
 
 // NewFollower creates a Follower node.
@@ -457,15 +457,21 @@ func marshalRecord(r WALRecord) []byte {
 	}
 	buf := make([]byte, size)
 	off := 0
-	buf[off] = r.Kind; off++
-	le.PutUint64(buf[off:], r.SeqNum); off += 8
-	le.PutUint64(buf[off:], r.TxnID); off += 8
+	buf[off] = r.Kind
+	off++
+	le.PutUint64(buf[off:], r.SeqNum)
+	off += 8
+	le.PutUint64(buf[off:], r.TxnID)
+	off += 8
 	if len(r.Key) > 0 {
-		le.PutUint32(buf[off:], uint32(len(r.Key))); off += 4
-		copy(buf[off:], r.Key); off += len(r.Key)
+		le.PutUint32(buf[off:], uint32(len(r.Key)))
+		off += 4
+		copy(buf[off:], r.Key)
+		off += len(r.Key)
 	}
 	if r.Kind == 0 {
-		le.PutUint32(buf[off:], uint32(len(r.Value))); off += 4
+		le.PutUint32(buf[off:], uint32(len(r.Value)))
+		off += 4
 		copy(buf[off:], r.Value)
 	}
 	return buf
@@ -477,9 +483,12 @@ func unmarshalRecord(buf []byte) (WALRecord, error) {
 	}
 	off := 0
 	r := WALRecord{}
-	r.Kind = buf[off]; off++
-	r.SeqNum = le.Uint64(buf[off:]); off += 8
-	r.TxnID = le.Uint64(buf[off:]); off += 8
+	r.Kind = buf[off]
+	off++
+	r.SeqNum = le.Uint64(buf[off:])
+	off += 8
+	r.TxnID = le.Uint64(buf[off:])
+	off += 8
 	r.Tombstone = r.Kind == 1
 
 	if r.Kind == 2 || r.Kind == 3 || r.Kind == 4 { // txn control
@@ -488,17 +497,20 @@ func unmarshalRecord(buf []byte) (WALRecord, error) {
 	if off+4 > len(buf) {
 		return WALRecord{}, fmt.Errorf("key len overrun")
 	}
-	kl := int(le.Uint32(buf[off:])); off += 4
+	kl := int(le.Uint32(buf[off:]))
+	off += 4
 	if off+kl > len(buf) {
 		return WALRecord{}, fmt.Errorf("key overrun")
 	}
 	r.Key = make([]byte, kl)
-	copy(r.Key, buf[off:]); off += kl
+	copy(r.Key, buf[off:])
+	off += kl
 	if r.Kind == 0 {
 		if off+4 > len(buf) {
 			return WALRecord{}, fmt.Errorf("val len overrun")
 		}
-		vl := int(le.Uint32(buf[off:])); off += 4
+		vl := int(le.Uint32(buf[off:]))
+		off += 4
 		if off+vl > len(buf) {
 			return WALRecord{}, fmt.Errorf("val overrun")
 		}
@@ -513,11 +525,11 @@ func unmarshalRecord(buf []byte) (WALRecord, error) {
 // ringBuffer is a fixed-size, lock-protected circular buffer of WALRecords.
 // It allows followers to catch up without the leader keeping an unbounded log.
 type ringBuffer struct {
-	mu      sync.RWMutex
-	slots   []WALRecord
-	size    uint64
-	head    uint64 // next write position (mod size)
-	count   uint64 // number of slots filled
+	mu    sync.RWMutex
+	slots []WALRecord
+	size  uint64
+	head  uint64 // next write position (mod size)
+	count uint64 // number of slots filled
 }
 
 func newRingBuffer(size uint64) *ringBuffer {
