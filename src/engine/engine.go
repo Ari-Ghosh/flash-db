@@ -110,6 +110,7 @@ import (
 	"sync/atomic"
 
 	"local/flashdb/src/backup"
+	"local/flashdb/src/bloom"
 	"local/flashdb/src/btree"
 	"local/flashdb/src/compaction"
 	"local/flashdb/src/memtable"
@@ -128,6 +129,11 @@ type Config struct {
 	L1SizeThreshold    int64
 	WALSyncPolicy      wal.SyncPolicy
 	Codec              types.Codec
+	// Bloom filter adaptive sizing.  The engine tracks false-positive rates
+	// per SSTable and adjusts the FPR target for newly flushed SSTables.
+	BloomFPRTarget float64 // baseline FPR (default 0.01 = 1%)
+	BloomFPRMin    float64 // lower bound (default 0.001 = 0.1%)
+	BloomFPRMax    float64 // upper bound (default 0.05  = 5%)
 	// Replication is optional.  When non-nil, the engine registers writes
 	// with the leader for fanout to followers.
 	Replication 	   *replication.Config
@@ -142,6 +148,9 @@ func DefaultConfig(dir string) Config {
 		L1SizeThreshold:    256 * 1024 * 1024,
 		WALSyncPolicy:      wal.SyncBatch,
 		Codec:              types.CodecNone,
+		BloomFPRTarget:     0.01,
+		BloomFPRMin:        0.001,
+		BloomFPRMax:        0.05,
 	}
 }
 
@@ -162,8 +171,9 @@ type DB struct {
 	l1Tree *btree.BTree
 	l2Tree *btree.BTree
 
-	compactor *compaction.Engine
-	snapTrack *types.SnapshotTracker
+	compactor      *compaction.Engine
+	snapTrack      *types.SnapshotTracker
+	bloomTelemetry *bloom.BloomTelemetry
 
 	leader   *replication.Leader   // nil if not configured
 	follower *replication.Follower // nil if not configured
@@ -190,6 +200,15 @@ func Open(cfg Config) (*DB, error) {
 	if cfg.L1SizeThreshold == 0 {
 		cfg.L1SizeThreshold = 256 * 1024 * 1024
 	}
+	if cfg.BloomFPRTarget <= 0 {
+		cfg.BloomFPRTarget = 0.01
+	}
+	if cfg.BloomFPRMin <= 0 {
+		cfg.BloomFPRMin = 0.001
+	}
+	if cfg.BloomFPRMax <= 0 {
+		cfg.BloomFPRMax = 0.05
+	}
 
 	l1Tree, err := btree.Open(filepath.Join(cfg.Dir, "btree_l1.db"))
 	if err != nil {
@@ -207,22 +226,24 @@ func Open(cfg Config) (*DB, error) {
 	}
 
 	snapTrack := types.NewSnapshotTracker()
+	bt := bloom.NewBloomTelemetry()
 	db := &DB{
-		cfg:       cfg,
-		memtable:  memtable.New(cfg.MemTableSize),
-		l1Tree:    l1Tree,
-		l2Tree:    l2Tree,
-		walActive: w,
-		snapTrack: snapTrack,
-		closeCh:   make(chan struct{}),
-		flushDone: make(chan struct{}, 1),
+		cfg:            cfg,
+		memtable:       memtable.New(cfg.MemTableSize),
+		l1Tree:         l1Tree,
+		l2Tree:         l2Tree,
+		walActive:      w,
+		snapTrack:      snapTrack,
+		bloomTelemetry: bt,
+		closeCh:        make(chan struct{}),
+		flushDone:      make(chan struct{}, 1),
 	}
 
 	compCfg := compaction.Config{
 		L0Threshold:     cfg.L0CompactThreshold,
 		L1SizeThreshold: cfg.L1SizeThreshold,
 	}
-	db.compactor = compaction.New(compCfg, l1Tree, l2Tree, snapTrack)
+	db.compactor = compaction.New(compCfg, l1Tree, l2Tree, snapTrack, bt)
 	db.compactor.Start()
 
 	if err := db.replayWAL(w); err != nil {
@@ -302,11 +323,17 @@ func (db *DB) SeqAt(key []byte, seqNum uint64) uint64 {
 	for i := len(l0Files) - 1; i >= 0; i-- {
 		r, err := sstable.OpenReader(l0Files[i])
 		if err == nil {
+			if !r.MayContain(key) {
+				_ = r.Close()
+				continue
+			}
+			db.bloomTelemetry.RecordQuery(l0Files[i])
 			e, err := r.Get(key)
 			_ = r.Close()
 			if err == nil && e.SeqNum <= seqNum {
 				return e.SeqNum
 			}
+			db.bloomTelemetry.RecordFalsePositive(l0Files[i])
 		}
 	}
 
@@ -465,6 +492,13 @@ func (db *DB) GetAt(key []byte, seqNum uint64) ([]byte, error) {
 	for i := len(l0Files) - 1; i >= 0; i-- {
 		r, err := sstable.OpenReader(l0Files[i])
 		if err == nil {
+			bloomHit := r.MayContain(key)
+			if !bloomHit {
+				_ = r.Close()
+				continue
+			}
+			// Bloom said "maybe" — record the query and do the disk read.
+			db.bloomTelemetry.RecordQuery(l0Files[i])
 			e, err := r.Get(key)
 			_ = r.Close()
 			if err == nil && e.SeqNum <= seqNum {
@@ -473,6 +507,8 @@ func (db *DB) GetAt(key []byte, seqNum uint64) ([]byte, error) {
 				}
 				return e.Value, nil
 			}
+			// Key absent despite bloom saying "maybe" → false positive.
+			db.bloomTelemetry.RecordFalsePositive(l0Files[i])
 		}
 	}
 
@@ -692,7 +728,13 @@ func (db *DB) flushImmutable() error {
 	seq := db.seq.Load()
 	path := filepath.Join(db.cfg.Dir, fmt.Sprintf("l0_%020d.sst", seq))
 
-	w, err := sstable.NewWriter(path, uint(len(entries))) //nolint:gosec
+	// Use adaptive bloom FPR based on observed false-positive telemetry.
+	fpr := db.bloomTelemetry.Recommend(
+		db.cfg.BloomFPRTarget,
+		db.cfg.BloomFPRMin,
+		db.cfg.BloomFPRMax,
+	)
+	w, err := sstable.NewWriterWithFPR(path, uint(len(entries)), fpr) //nolint:gosec
 	if err != nil {
 		return err
 	}
@@ -846,6 +888,30 @@ type Stats struct {
 	MemTableCount int64
 	L0FileCount   int
 	SeqNum        uint64
+}
+
+// BloomFilterStats holds aggregate bloom filter telemetry.
+type BloomFilterStats struct {
+	TotalQueries       uint64
+	TotalFalsePositives uint64
+	ObservedFPR        float64
+	CurrentTargetFPR   float64 // what the next SSTable will use
+}
+
+// BloomStats returns aggregate bloom filter false-positive telemetry and
+// the adaptive FPR that will be used for the next SSTable flush.
+func (db *DB) BloomStats() BloomFilterStats {
+	q, fp := db.bloomTelemetry.AggregateStats()
+	var observed float64
+	if q > 0 {
+		observed = float64(fp) / float64(q)
+	}
+	return BloomFilterStats{
+		TotalQueries:       q,
+		TotalFalsePositives: fp,
+		ObservedFPR:        observed,
+		CurrentTargetFPR:   db.bloomTelemetry.Recommend(db.cfg.BloomFPRTarget, db.cfg.BloomFPRMin, db.cfg.BloomFPRMax),
+	}
 }
 
 // ── Merged iterator (unchanged from v2) ──────────────────────────────────────

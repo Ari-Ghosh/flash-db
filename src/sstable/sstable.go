@@ -119,11 +119,22 @@ type Writer struct {
 
 // NewWriter opens path for writing and returns a Writer.
 func NewWriter(path string, expectedEntries uint) (*Writer, error) {
-	return NewWriterWithCodec(path, expectedEntries, types.NoopCompressor{})
+	return NewWriterWithCodecAndFPR(path, expectedEntries, types.NoopCompressor{}, 0.01)
+}
+
+// NewWriterWithFPR opens path for writing with a custom bloom filter FPR.
+func NewWriterWithFPR(path string, expectedEntries uint, fpr float64) (*Writer, error) {
+	return NewWriterWithCodecAndFPR(path, expectedEntries, types.NoopCompressor{}, fpr)
 }
 
 // NewWriterWithCodec opens path for writing using the given compressor.
 func NewWriterWithCodec(path string, expectedEntries uint, comp types.Compressor) (*Writer, error) {
+	return NewWriterWithCodecAndFPR(path, expectedEntries, comp, 0.01)
+}
+
+// NewWriterWithCodecAndFPR opens path for writing using the given compressor
+// and a custom bloom filter false-positive rate.
+func NewWriterWithCodecAndFPR(path string, expectedEntries uint, comp types.Compressor, fpr float64) (*Writer, error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return nil, fmt.Errorf("sstable writer: %w", err)
@@ -132,10 +143,13 @@ func NewWriterWithCodec(path string, expectedEntries uint, comp types.Compressor
 	if n < 100 {
 		n = 100
 	}
+	if fpr <= 0 || fpr >= 1 {
+		fpr = 0.01
+	}
 	return &Writer{
 		f:     f,
 		bw:    bufio.NewWriterSize(f, 256*1024),
-		bloom: bloom.New(n, 0.01),
+		bloom: bloom.New(n, fpr),
 		comp:  comp,
 		codec: comp.Codec(),
 	}, nil

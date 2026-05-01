@@ -70,6 +70,13 @@ import (
 	types "local/flashdb/src/types"
 )
 
+// BloomTelemetryCleaner lets compaction remove stale bloom-filter telemetry
+// entries for SSTable files that have been merged and deleted.
+// Satisfied by *bloom.BloomTelemetry.
+type BloomTelemetryCleaner interface {
+	Remove(path string)
+}
+
 // Config controls compaction behaviour.
 type Config struct {
 	// L0Threshold is the number of L0 SSTables that triggers L0→L1 compaction.
@@ -97,6 +104,7 @@ type Engine struct {
 	l1Tree   *btree.BTree
 	l2Tree   *btree.BTree
 	snapProv SnapshotProvider
+	bloomTC  BloomTelemetryCleaner // may be nil
 
 	mu      sync.Mutex
 	trigCh  chan struct{} // signals the worker there is work
@@ -106,12 +114,13 @@ type Engine struct {
 }
 
 // New creates a compaction engine.
-func New(cfg Config, l1Tree, l2Tree *btree.BTree, sp SnapshotProvider) *Engine {
+func New(cfg Config, l1Tree, l2Tree *btree.BTree, sp SnapshotProvider, btc BloomTelemetryCleaner) *Engine {
 	return &Engine{
 		cfg:      cfg,
 		l1Tree:   l1Tree,
 		l2Tree:   l2Tree,
 		snapProv: sp,
+		bloomTC:  btc,
 		trigCh:   make(chan struct{}, 1),
 		quitCh:   make(chan struct{}),
 		doneCh:   make(chan struct{}),
@@ -210,6 +219,10 @@ func (e *Engine) compactL0(paths []string) error {
 	for _, p := range paths {
 		if err := os.Remove(p); err != nil {
 			log.Printf("compaction: remove %s: %v", p, err)
+		}
+		// Clean up stale bloom-filter telemetry for this SSTable.
+		if e.bloomTC != nil {
+			e.bloomTC.Remove(p)
 		}
 	}
 	log.Printf("compaction: merged %d L0 SSTables → L1 (%d entries total)", len(paths), len(combined))
