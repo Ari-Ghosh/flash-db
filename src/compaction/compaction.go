@@ -343,7 +343,13 @@ func (h mergeHeap) Less(i, j int) bool {
 	}
 	return h[i].entry.SeqNum > h[j].entry.SeqNum
 }
-func (h *mergeHeap) Push(x any) { *h = append(*h, x.(heapItem)) }
+func (h *mergeHeap) Push(x any) {
+	item, ok := x.(heapItem)
+	if !ok {
+		panic("compaction: invalid heap item")
+	}
+	*h = append(*h, item)
+}
 func (h *mergeHeap) Pop() any {
 	old := *h
 	n := len(old)
@@ -374,7 +380,8 @@ func kWayMerge(readers []*sstable.Reader, oldestPinnedSeq uint64) ([]types.Entry
 	var candidates []types.Entry
 
 	for h.Len() > 0 {
-		item := heap.Pop(h).(heapItem)
+		itemAny := heap.Pop(h)
+		item := itemAny.(heapItem)
 		e := item.entry
 
 		if next, ok := <-item.ch; ok {

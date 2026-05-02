@@ -108,8 +108,6 @@ const (
 	KindTxnAbort  byte = 4
 )
 
-var le = binary.LittleEndian
-
 // SyncPolicy controls when WAL writes are flushed to disk.
 type SyncPolicy int
 
@@ -236,8 +234,10 @@ func (w *WAL) AppendBatch(records []BatchRecord) error {
 		return w.writeRaw(combined, true)
 	case SyncNone:
 		return w.writeRaw(combined, false)
-	default:
+	case SyncBatch:
 		return w.writeQueued(combined)
+	default:
+		return fmt.Errorf("invalid WAL sync policy %v", w.policy)
 	}
 }
 
@@ -259,15 +259,17 @@ func (w *WAL) appendRecord(kind byte, seq, txnID uint64, key, value []byte) erro
 		return w.writeRaw(append(makeHeader(payload), payload...), true)
 	case SyncNone:
 		return w.writeRaw(append(makeHeader(payload), payload...), false)
-	default:
+	case SyncBatch:
 		return w.writeQueued(append(makeHeader(payload), payload...))
+	default:
+		return fmt.Errorf("invalid WAL sync policy %v", w.policy)
 	}
 }
 
 func makeHeader(payload []byte) []byte {
 	h := make([]byte, 8)
-	le.PutUint32(h[0:], crc32.ChecksumIEEE(payload))
-	le.PutUint32(h[4:], uint32(len(payload)))
+	binary.LittleEndian.PutUint32(h[0:], crc32.ChecksumIEEE(payload))
+	binary.LittleEndian.PutUint32(h[4:], uint32(len(payload)))
 	return h
 }
 
@@ -369,8 +371,8 @@ func (w *WAL) Replay() ([]Record, error) {
 		if _, err := io.ReadFull(r, hdr[:]); err != nil {
 			break // EOF or torn header — stop
 		}
-		checksum := le.Uint32(hdr[0:])
-		length := le.Uint32(hdr[4:])
+		checksum := binary.LittleEndian.Uint32(hdr[0:])
+		length := binary.LittleEndian.Uint32(hdr[4:])
 		if length > 64*1024*1024 { // sanity: no record > 64 MB
 			break
 		}
@@ -418,25 +420,25 @@ func marshalPayload(kind byte, seq, txnID uint64, key, value []byte) []byte {
 	if len(key) > 0 {
 		size += 4 + len(key)
 	}
-	if kind == KindPut && len(value) >= 0 {
+	if kind == KindPut {
 		size += 4 + len(value)
 	}
 	buf := make([]byte, size)
 	off := 0
 	buf[off] = kind
 	off++
-	le.PutUint64(buf[off:], seq)
+	binary.LittleEndian.PutUint64(buf[off:], seq)
 	off += 8
-	le.PutUint64(buf[off:], txnID)
+	binary.LittleEndian.PutUint64(buf[off:], txnID)
 	off += 8
 	if len(key) > 0 {
-		le.PutUint32(buf[off:], uint32(len(key)))
+		binary.LittleEndian.PutUint32(buf[off:], uint32(len(key)))
 		off += 4
 		copy(buf[off:], key)
 		off += len(key)
 	}
 	if kind == KindPut {
-		le.PutUint32(buf[off:], uint32(len(value)))
+		binary.LittleEndian.PutUint32(buf[off:], uint32(len(value)))
 		off += 4
 		copy(buf[off:], value)
 	}
@@ -450,9 +452,9 @@ func unmarshalPayload(buf []byte) (Record, error) {
 	off := 0
 	kind := buf[off]
 	off++
-	seq := le.Uint64(buf[off:])
+	seq := binary.LittleEndian.Uint64(buf[off:])
 	off += 8
-	txnID := le.Uint64(buf[off:])
+	txnID := binary.LittleEndian.Uint64(buf[off:])
 	off += 8
 
 	rec := Record{Kind: kind, SeqNum: seq, TxnID: txnID, Tombstone: kind == KindDelete}
@@ -465,7 +467,7 @@ func unmarshalPayload(buf []byte) (Record, error) {
 	if off+4 > len(buf) {
 		return Record{}, fmt.Errorf("wal: key len overrun")
 	}
-	keyLen := int(le.Uint32(buf[off:]))
+	keyLen := int(binary.LittleEndian.Uint32(buf[off:]))
 	off += 4
 	if off+keyLen > len(buf) {
 		return Record{}, fmt.Errorf("wal: key overrun")
@@ -478,7 +480,7 @@ func unmarshalPayload(buf []byte) (Record, error) {
 		if off+4 > len(buf) {
 			return Record{}, fmt.Errorf("wal: val len overrun")
 		}
-		valLen := int(le.Uint32(buf[off:]))
+		valLen := int(binary.LittleEndian.Uint32(buf[off:]))
 		off += 4
 		if off+valLen > len(buf) {
 			return Record{}, fmt.Errorf("wal: val overrun")

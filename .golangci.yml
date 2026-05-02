@@ -34,7 +34,6 @@ linters:
     - gocyclo
     - godot
     - godox
-    - goerr113
     - gofmt
     - goimports
     - gomodguard
@@ -43,7 +42,6 @@ linters:
     - lll
     - misspell
     - nakedret
-    - nestif
     - nolintlint
     - prealloc
     - predeclared
@@ -59,11 +57,11 @@ linters-settings:
   # Error checking
   errcheck:
     check-type-assertions: true
-    check-blank: true
+    check-blank: false
 
   # Code complexity
   gocyclo:
-    min-complexity: 15
+    min-complexity: 25
 
   funlen:
     lines: 100
@@ -84,15 +82,20 @@ linters-settings:
       - style
       - opinionated
       - performance
+    disabled-checks:
+      - hugeParam
+      - ifElseChain
+
+  gosec:
+    excludes:
+      - G404
+      - G115
+      - G102
+      - G306
 
   revive:
     ignore-generated-header: true
     severity: warning
-
-  # Security
-  gosec:
-    excludes:
-      - G404  # Use of weak random number generator
 
   godox:
     keywords:

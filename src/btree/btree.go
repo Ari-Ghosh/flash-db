@@ -97,8 +97,6 @@ const (
 	DefaultCachePages = 2048
 )
 
-var le = binary.LittleEndian
-
 // ── Page structures ───────────────────────────────────────────────────────────
 
 type leafCell struct {
@@ -406,10 +404,7 @@ func (bt *BTree) readPage(id uint64) (*page, error) {
 	if _, err := bt.f.ReadAt(buf, int64(id)*pageSize+512); err != nil {
 		return nil, fmt.Errorf("btree readPage %d: %w", id, err)
 	}
-	p, err := decodePage(id, buf)
-	if err != nil {
-		return nil, err
-	}
+	p := decodePage(id, buf)
 	bt.cache.Put(id, p)
 	return p, nil
 }
@@ -441,9 +436,9 @@ const headerMagic = uint64(0xBEEFCAFEBEEFCAFE)
 
 func (bt *BTree) saveHeader() error {
 	buf := make([]byte, 512)
-	le.PutUint64(buf[0:], headerMagic)
-	le.PutUint64(buf[8:], bt.rootID)
-	le.PutUint64(buf[16:], bt.pageCount)
+	binary.LittleEndian.PutUint64(buf[0:], headerMagic)
+	binary.LittleEndian.PutUint64(buf[8:], bt.rootID)
+	binary.LittleEndian.PutUint64(buf[16:], bt.pageCount)
 	_, err := bt.f.WriteAt(buf, 0)
 	return err
 }
@@ -453,11 +448,11 @@ func (bt *BTree) loadHeader() error {
 	if _, err := bt.f.ReadAt(buf, 0); err != nil {
 		return err
 	}
-	if le.Uint64(buf[0:]) != headerMagic {
+	if binary.LittleEndian.Uint64(buf[0:]) != headerMagic {
 		return fmt.Errorf("btree: bad header magic")
 	}
-	bt.rootID = le.Uint64(buf[8:])
-	bt.pageCount = le.Uint64(buf[16:])
+	bt.rootID = binary.LittleEndian.Uint64(buf[8:])
+	bt.pageCount = binary.LittleEndian.Uint64(buf[16:])
 	return nil
 }
 
@@ -465,10 +460,10 @@ func (bt *BTree) loadHeader() error {
 
 func encodePage(p *page) []byte {
 	buf := make([]byte, pageSize)
-	le.PutUint16(buf[0:], p.pageType)
+	binary.LittleEndian.PutUint16(buf[0:], p.pageType)
 	off := 8
 	if p.pageType == typeLeaf {
-		le.PutUint16(buf[2:], uint16(len(p.leaves)))
+		binary.LittleEndian.PutUint16(buf[2:], uint16(len(p.leaves)))
 		for _, c := range p.leaves {
 			flags := byte(0)
 			if c.tombstone {
@@ -480,29 +475,29 @@ func encodePage(p *page) []byte {
 			}
 			buf[off] = flags
 			off++
-			le.PutUint64(buf[off:], c.seqNum)
+			binary.LittleEndian.PutUint64(buf[off:], c.seqNum)
 			off += 8
-			le.PutUint16(buf[off:], uint16(len(c.key)))
+			binary.LittleEndian.PutUint16(buf[off:], uint16(len(c.key)))
 			off += 2
 			copy(buf[off:], c.key)
 			off += len(c.key)
-			le.PutUint16(buf[off:], uint16(len(c.value)))
+			binary.LittleEndian.PutUint16(buf[off:], uint16(len(c.value)))
 			off += 2
 			copy(buf[off:], c.value)
 			off += len(c.value)
 		}
 	} else {
-		le.PutUint16(buf[2:], uint16(len(p.internals)))
-		le.PutUint64(buf[off:], p.rightmost)
+		binary.LittleEndian.PutUint16(buf[2:], uint16(len(p.internals)))
+		binary.LittleEndian.PutUint64(buf[off:], p.rightmost)
 		off += 8
 		for _, c := range p.internals {
 			needed := 8 + 2 + len(c.key)
 			if off+needed > pageSize {
 				break
 			}
-			le.PutUint64(buf[off:], c.leftChildID)
+			binary.LittleEndian.PutUint64(buf[off:], c.leftChildID)
 			off += 8
-			le.PutUint16(buf[off:], uint16(len(c.key)))
+			binary.LittleEndian.PutUint16(buf[off:], uint16(len(c.key)))
 			off += 2
 			copy(buf[off:], c.key)
 			off += len(c.key)
@@ -511,10 +506,10 @@ func encodePage(p *page) []byte {
 	return buf
 }
 
-func decodePage(id uint64, buf []byte) (*page, error) {
+func decodePage(id uint64, buf []byte) *page {
 	p := &page{id: id}
-	p.pageType = le.Uint16(buf[0:])
-	numKeys := int(le.Uint16(buf[2:]))
+	p.pageType = binary.LittleEndian.Uint16(buf[0:])
+	numKeys := int(binary.LittleEndian.Uint16(buf[2:]))
 	off := 8
 	if p.pageType == typeLeaf {
 		for i := 0; i < numKeys && off < pageSize; i++ {
@@ -523,9 +518,9 @@ func decodePage(id uint64, buf []byte) (*page, error) {
 			}
 			flags := buf[off]
 			off++
-			seq := le.Uint64(buf[off:])
+			seq := binary.LittleEndian.Uint64(buf[off:])
 			off += 8
-			kl := int(le.Uint16(buf[off:]))
+			kl := int(binary.LittleEndian.Uint16(buf[off:]))
 			off += 2
 			if off+kl+2 > pageSize {
 				break
@@ -533,7 +528,7 @@ func decodePage(id uint64, buf []byte) (*page, error) {
 			key := make([]byte, kl)
 			copy(key, buf[off:])
 			off += kl
-			vl := int(le.Uint16(buf[off:]))
+			vl := int(binary.LittleEndian.Uint16(buf[off:]))
 			off += 2
 			if off+vl > pageSize {
 				break
@@ -546,15 +541,15 @@ func decodePage(id uint64, buf []byte) (*page, error) {
 			})
 		}
 	} else {
-		p.rightmost = le.Uint64(buf[off:])
+		p.rightmost = binary.LittleEndian.Uint64(buf[off:])
 		off += 8
 		for i := 0; i < numKeys && off < pageSize; i++ {
 			if off+10 > pageSize {
 				break
 			}
-			childID := le.Uint64(buf[off:])
+			childID := binary.LittleEndian.Uint64(buf[off:])
 			off += 8
-			kl := int(le.Uint16(buf[off:]))
+			kl := int(binary.LittleEndian.Uint16(buf[off:]))
 			off += 2
 			if off+kl > pageSize {
 				break
@@ -565,7 +560,7 @@ func decodePage(id uint64, buf []byte) (*page, error) {
 			p.internals = append(p.internals, internalCell{key: key, leftChildID: childID})
 		}
 	}
-	return p, nil
+	return p
 }
 
 // Close flushes dirty pages and closes the file.

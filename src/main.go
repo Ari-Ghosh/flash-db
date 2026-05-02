@@ -78,6 +78,12 @@ import (
 )
 
 func main() {
+	if err := runDemo(); err != nil {
+		panic(err)
+	}
+}
+
+func runDemo() error { //nolint:funlen
 	dir := "/tmp/hybriddb_v3"
 	os.RemoveAll(dir)
 
@@ -86,17 +92,39 @@ func main() {
 	cfg.L0CompactThreshold = 2
 
 	db, err := engine.Open(cfg)
-	must(err)
+	if err != nil {
+		return err
+	}
 	defer db.Close()
 
-	// ── 1. Parallel writes (group-commit WAL) ─────────────────────────────────
+	if err := runParallelWrites(db); err != nil {
+		return err
+	}
+	if err := runTransactionDemo(db); err != nil {
+		return err
+	}
+	if err := runPrefixScanDemo(db); err != nil {
+		return err
+	}
+	if err := runBackupRestoreDemo(db); err != nil {
+		return err
+	}
+	if err := runReplicationDemo(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func runParallelWrites(db *engine.DB) error {
 	fmt.Println("── 1. Parallel writes ────────────────────────────────")
 	done := make(chan struct{})
 	for g := 0; g < 4; g++ {
 		g := g
 		go func() {
 			for i := 0; i < 50; i++ {
-				db.Put([]byte(fmt.Sprintf("par:g%d:k%d", g, i)), []byte("v"))
+				if err := db.Put([]byte(fmt.Sprintf("par:g%d:k%d", g, i)), []byte("v")); err != nil {
+					panic(err)
+				}
 			}
 			done <- struct{}{}
 		}()
@@ -104,81 +132,131 @@ func main() {
 	for i := 0; i < 4; i++ {
 		<-done
 	}
-	v, _ := db.Get([]byte("par:g0:k0"))
+	v, err := db.Get([]byte("par:g0:k0"))
+	if err != nil {
+		return err
+	}
 	fmt.Printf("  par:g0:k0 = %q\n", v)
+	return nil
+}
 
-	// ── 2. Multi-key transaction ──────────────────────────────────────────────
+func runTransactionDemo(db *engine.DB) error {
 	fmt.Println("\n── 2. Transaction ────────────────────────────────────")
-	must(db.Put([]byte("alice"), []byte("1000")))
-	must(db.Put([]byte("bob"), []byte("500")))
+	if err := db.Put([]byte("alice"), []byte("1000")); err != nil {
+		return err
+	}
+	if err := db.Put([]byte("bob"), []byte("500")); err != nil {
+		return err
+	}
 
 	tx := db.Begin()
-	tx.Put([]byte("alice"), []byte("900"))
-	tx.Put([]byte("bob"), []byte("600"))
-	must(tx.Commit())
+	if err := tx.Put([]byte("alice"), []byte("900")); err != nil {
+		return err
+	}
+	if err := tx.Put([]byte("bob"), []byte("600")); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
 
-	a, _ := db.Get([]byte("alice"))
-	b, _ := db.Get([]byte("bob"))
+	a, err := db.Get([]byte("alice"))
+	if err != nil {
+		return err
+	}
+	b, err := db.Get([]byte("bob"))
+	if err != nil {
+		return err
+	}
 	fmt.Printf("  alice=%s  bob=%s  (transferred 100)\n", a, b)
 
 	// Conflict demo.
 	tx2 := db.Begin()
-	tx2.Get([]byte("alice"))                     // read into read-set
-	must(db.Put([]byte("alice"), []byte("800"))) // concurrent write
-	tx2.Put([]byte("alice"), []byte("700"))
+	_, _ = tx2.Get([]byte("alice")) // read into read-set
+	if err := db.Put([]byte("alice"), []byte("800")); err != nil {
+		return err
+	}
+	if err := tx2.Put([]byte("alice"), []byte("700")); err != nil {
+		fmt.Printf("  tx2 put error = %v\n", err)
+	}
 	err = tx2.Commit()
 	fmt.Printf("  conflict commit err = %v\n", err)
+	return nil
+}
 
-	// ── 3. Prefix scan ────────────────────────────────────────────────────────
-	fmt.Println("\n── 3. Prefix scan ────────────────────────────────────")
+func runPrefixScanDemo(db *engine.DB) error {
+	fmt.Println("\n── 3. Prefix scan ──────────────────────────────────")
 	for _, k := range []string{"user:alice", "user:bob", "user:carol", "order:1"} {
-		must(db.Put([]byte(k), []byte(k+"_data")))
+		if err := db.Put([]byte(k), []byte(k+"_data")); err != nil {
+			return err
+		}
 	}
-	iter, _ := db.PrefixScan([]byte("user:"))
+	iter, err := db.PrefixScan([]byte("user:"))
+	if err != nil {
+		return err
+	}
 	fmt.Print("  users: ")
 	for iter.Valid() {
 		fmt.Printf("%s ", iter.Key())
 		iter.Next()
 	}
-	iter.Close()
+	if err := iter.Close(); err != nil {
+		return err
+	}
 	fmt.Println()
 
-	// Reverse prefix scan.
-	rIter, _ := db.NewIterator(types.IteratorOptions{Prefix: []byte("user:"), Reverse: true})
+	rIter, err := db.NewIterator(types.IteratorOptions{Prefix: []byte("user:"), Reverse: true})
+	if err != nil {
+		return err
+	}
 	fmt.Print("  users (reverse): ")
 	for rIter.Valid() {
 		fmt.Printf("%s ", rIter.Key())
 		rIter.Next()
 	}
-	rIter.Close()
+	if err := rIter.Close(); err != nil {
+		return err
+	}
 	fmt.Println()
+	return nil
+}
 
-	// ── 4. Backup and restore ─────────────────────────────────────────────────
+func runBackupRestoreDemo(db *engine.DB) error {
 	fmt.Println("\n── 4. Backup & restore ───────────────────────────────")
 	backupDir := "/tmp/hybriddb_v3_backup"
 	os.RemoveAll(backupDir)
 	manifest, err := db.Backup(backupDir)
-	must(err)
+	if err != nil {
+		return err
+	}
 	fmt.Printf("  backed up %d files, snapSeq=%d\n", len(manifest.Files), manifest.SnapSeq)
 
-	// Write more data after the backup.
-	must(db.Put([]byte("post-backup"), []byte("not-in-backup")))
-	must(db.Close())
+	if err := db.Put([]byte("post-backup"), []byte("not-in-backup")); err != nil {
+		return err
+	}
+	if err := db.Close(); err != nil {
+		return err
+	}
 
-	// Restore to a new directory and verify.
 	restoreDir := "/tmp/hybriddb_v3_restored"
 	os.RemoveAll(restoreDir)
-	must(backup.Restore(backupDir, restoreDir))
+	if err := backup.Restore(backupDir, restoreDir); err != nil {
+		return err
+	}
 
 	db2, err := engine.Open(engine.DefaultConfig(restoreDir))
-	must(err)
+	if err != nil {
+		return err
+	}
 	defer db2.Close()
 	av, _ := db2.Get([]byte("alice"))
 	fmt.Printf("  restored alice=%s\n", av)
 	_, postErr := db2.Get([]byte("post-backup"))
 	fmt.Printf("  post-backup key in restore: %v (want ErrKeyNotFound)\n", postErr)
+	return nil
+}
 
-	// ── 5. Replication ────────────────────────────────────────────────────────
+func runReplicationDemo() error {
 	fmt.Println("\n── 5. Distributed replication ────────────────────────")
 	leaderDir := "/tmp/hybriddb_leader"
 	followerDir := "/tmp/hybriddb_follower"
@@ -191,7 +269,9 @@ func main() {
 		Role: "leader", ListenAddr: "127.0.0.1:15432", Secret: secret,
 	}
 	leaderDB, err := engine.Open(lCfg)
-	must(err)
+	if err != nil {
+		return err
+	}
 	defer leaderDB.Close()
 	time.Sleep(50 * time.Millisecond)
 
@@ -201,12 +281,16 @@ func main() {
 		DialTimeout: 2 * time.Second, ReconnectInterval: 200 * time.Millisecond,
 	}
 	followerDB, err := engine.Open(fCfg)
-	must(err)
+	if err != nil {
+		return err
+	}
 	defer followerDB.Close()
 	time.Sleep(200 * time.Millisecond)
 
 	for i := 0; i < 5; i++ {
-		must(leaderDB.Put([]byte(fmt.Sprintf("rep:%d", i)), []byte(fmt.Sprintf("v%d", i))))
+		if err := leaderDB.Put([]byte(fmt.Sprintf("rep:%d", i)), []byte(fmt.Sprintf("v%d", i))); err != nil {
+			return err
+		}
 	}
 	time.Sleep(300 * time.Millisecond)
 
@@ -220,8 +304,8 @@ func main() {
 		}
 	}
 	fmt.Println("\nDone.")
+	return nil
 }
-
 func must(err error) {
 	if err != nil {
 		panic(err)

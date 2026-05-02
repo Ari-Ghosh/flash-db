@@ -65,7 +65,8 @@ func (t *BloomTelemetry) RecordFalsePositive(path string) {
 // Stats returns the FilterStats for path, or nil if not tracked.
 func (t *BloomTelemetry) Stats(path string) *FilterStats {
 	if v, ok := t.stats.Load(path); ok {
-		return v.(*FilterStats)
+		s := v.(*FilterStats)
+		return s
 	}
 	return nil
 }
@@ -80,7 +81,10 @@ func (t *BloomTelemetry) Remove(path string) {
 // tracked SSTable.
 func (t *BloomTelemetry) AggregateStats() (totalQueries, totalFP uint64) {
 	t.stats.Range(func(_, value any) bool {
-		s := value.(*FilterStats)
+		s, ok := value.(*FilterStats)
+		if !ok {
+			return true
+		}
 		totalQueries += s.Queries.Load()
 		totalFP += s.FalsePositives.Load()
 		return true
@@ -131,8 +135,10 @@ func (t *BloomTelemetry) Recommend(targetFPR, minFPR, maxFPR float64) float64 {
 // getOrCreate returns the *FilterStats for path, creating it if necessary.
 func (t *BloomTelemetry) getOrCreate(path string) *FilterStats {
 	if v, ok := t.stats.Load(path); ok {
-		return v.(*FilterStats)
+		s := v.(*FilterStats)
+		return s
 	}
 	v, _ := t.stats.LoadOrStore(path, &FilterStats{})
-	return v.(*FilterStats)
+	s := v.(*FilterStats)
+	return s
 }

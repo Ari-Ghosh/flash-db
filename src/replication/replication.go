@@ -51,6 +51,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"local/flashdb/src/wal"
 )
 
 const (
@@ -58,8 +60,6 @@ const (
 	maxFrameSize   = 64 * 1024 * 1024 // 64 MB
 	challengeBytes = 32
 )
-
-var le = binary.LittleEndian
 
 // Errors
 var (
@@ -403,7 +403,8 @@ func (f *Follower) runOnce() error {
 		_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
 		r, err := decodeFrame(conn)
 		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
 				continue // keep-alive timeout, retry read
 			}
 			return fmt.Errorf("decode frame: %w", err)
@@ -421,8 +422,8 @@ func (f *Follower) runOnce() error {
 func encodeFrame(r WALRecord) ([]byte, error) {
 	payload := marshalRecord(r)
 	frame := make([]byte, 8+len(payload))
-	le.PutUint32(frame[0:], crc32.ChecksumIEEE(payload))
-	le.PutUint32(frame[4:], uint32(len(payload)))
+	binary.LittleEndian.PutUint32(frame[0:], crc32.ChecksumIEEE(payload))
+	binary.LittleEndian.PutUint32(frame[4:], uint32(len(payload)))
 	copy(frame[8:], payload)
 	return frame, nil
 }
@@ -432,8 +433,8 @@ func decodeFrame(r io.Reader) (WALRecord, error) {
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
 		return WALRecord{}, err
 	}
-	checksum := le.Uint32(hdr[0:])
-	payLen := le.Uint32(hdr[4:])
+	checksum := binary.LittleEndian.Uint32(hdr[0:])
+	payLen := binary.LittleEndian.Uint32(hdr[4:])
 	if payLen > maxFrameSize {
 		return WALRecord{}, ErrFrameTooLarge
 	}
@@ -452,25 +453,25 @@ func marshalRecord(r WALRecord) []byte {
 	if len(r.Key) > 0 {
 		size += 4 + len(r.Key)
 	}
-	if r.Kind == 0 { // KindPut
+	if r.Kind == wal.KindPut { // KindPut
 		size += 4 + len(r.Value)
 	}
 	buf := make([]byte, size)
 	off := 0
 	buf[off] = r.Kind
 	off++
-	le.PutUint64(buf[off:], r.SeqNum)
+	binary.LittleEndian.PutUint64(buf[off:], r.SeqNum)
 	off += 8
-	le.PutUint64(buf[off:], r.TxnID)
+	binary.LittleEndian.PutUint64(buf[off:], r.TxnID)
 	off += 8
 	if len(r.Key) > 0 {
-		le.PutUint32(buf[off:], uint32(len(r.Key)))
+		binary.LittleEndian.PutUint32(buf[off:], uint32(len(r.Key)))
 		off += 4
 		copy(buf[off:], r.Key)
 		off += len(r.Key)
 	}
-	if r.Kind == 0 {
-		le.PutUint32(buf[off:], uint32(len(r.Value)))
+	if r.Kind == wal.KindPut {
+		binary.LittleEndian.PutUint32(buf[off:], uint32(len(r.Value)))
 		off += 4
 		copy(buf[off:], r.Value)
 	}
@@ -485,9 +486,9 @@ func unmarshalRecord(buf []byte) (WALRecord, error) {
 	r := WALRecord{}
 	r.Kind = buf[off]
 	off++
-	r.SeqNum = le.Uint64(buf[off:])
+	r.SeqNum = binary.LittleEndian.Uint64(buf[off:])
 	off += 8
-	r.TxnID = le.Uint64(buf[off:])
+	r.TxnID = binary.LittleEndian.Uint64(buf[off:])
 	off += 8
 	r.Tombstone = r.Kind == 1
 
@@ -497,7 +498,7 @@ func unmarshalRecord(buf []byte) (WALRecord, error) {
 	if off+4 > len(buf) {
 		return WALRecord{}, fmt.Errorf("key len overrun")
 	}
-	kl := int(le.Uint32(buf[off:]))
+	kl := int(binary.LittleEndian.Uint32(buf[off:]))
 	off += 4
 	if off+kl > len(buf) {
 		return WALRecord{}, fmt.Errorf("key overrun")
@@ -505,11 +506,11 @@ func unmarshalRecord(buf []byte) (WALRecord, error) {
 	r.Key = make([]byte, kl)
 	copy(r.Key, buf[off:])
 	off += kl
-	if r.Kind == 0 {
+	if r.Kind == wal.KindPut {
 		if off+4 > len(buf) {
 			return WALRecord{}, fmt.Errorf("val len overrun")
 		}
-		vl := int(le.Uint32(buf[off:]))
+		vl := int(binary.LittleEndian.Uint32(buf[off:]))
 		off += 4
 		if off+vl > len(buf) {
 			return WALRecord{}, fmt.Errorf("val overrun")
@@ -583,13 +584,13 @@ func readUint64(r io.Reader, v *uint64) error {
 	if _, err := io.ReadFull(r, buf[:]); err != nil {
 		return err
 	}
-	*v = le.Uint64(buf[:])
+	*v = binary.LittleEndian.Uint64(buf[:])
 	return nil
 }
 
 func writeUint64(w io.Writer, v uint64) error {
 	var buf [8]byte
-	le.PutUint64(buf[:], v)
+	binary.LittleEndian.PutUint64(buf[:], v)
 	_, err := w.Write(buf[:])
 	return err
 }

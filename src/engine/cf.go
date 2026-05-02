@@ -28,7 +28,7 @@ import (
 
 // System-reserved key prefixes. Keys starting with \x00 are internal to flashDB.
 const (
-	cfPrefixMark = "\x00cf\x00"   // column-family key prefix
+	cfPrefixMark  = "\x00cf\x00"  // column-family key prefix
 	ttlPrefixMark = "\x00ttl\x00" // TTL metadata key prefix
 	idxPrefixMark = "\x00idx\x00" // secondary index key prefix
 	cfMetaSysKey  = "\x00cf_meta" // where CF names are stored
@@ -94,14 +94,6 @@ func (cf *CF) cfKey(key []byte) []byte {
 	copy(k, cf.prefix)
 	copy(k[len(cf.prefix):], key)
 	return k
-}
-
-// userKey strips the CF prefix from a DB key to recover the original user key.
-func (cf *CF) userKey(dbKey []byte) []byte {
-	if len(dbKey) < len(cf.prefix) {
-		return dbKey
-	}
-	return dbKey[len(cf.prefix):]
 }
 
 // ── DB methods for column families ───────────────────────────────────────────

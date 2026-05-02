@@ -927,7 +927,9 @@ func (db *DB) putRaw(key, value []byte) error {
 // Err returns the first background error (flush/compaction), if any.
 func (db *DB) Err() error {
 	if v := db.bgErr.Load(); v != nil {
-		return v.(error)
+		if err, ok := v.(error); ok {
+			return err
+		}
 	}
 	return nil
 }

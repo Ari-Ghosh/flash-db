@@ -79,12 +79,20 @@ func (c *Cache[V]) Get(key uint64) (V, bool) {
 	// T2 hit – already in the "frequently used" list; move to front.
 	if el, ok := c.t2Map[key]; ok {
 		c.t2.MoveToFront(el)
-		return el.Value.(*entry[V]).val, true
+		e, ok := el.Value.(*entry[V])
+		if !ok {
+			panic("arc: invalid T2 entry type")
+		}
+		return e.val, true
 	}
 
 	// T1 hit – first time we see it again; promote to T2.
 	if el, ok := c.t1Map[key]; ok {
-		v := el.Value.(*entry[V]).val
+		e, ok := el.Value.(*entry[V])
+		if !ok {
+			panic("arc: invalid T1 entry type")
+		}
+		v := e.val
 		// Remove from T1.
 		c.t1.Remove(el)
 		delete(c.t1Map, key)
@@ -115,7 +123,11 @@ func (c *Cache[V]) Put(key uint64, val V) {
 
 	// Already in T2: update value in place, move to front.
 	if el, ok := c.t2Map[key]; ok {
-		el.Value.(*entry[V]).val = val
+		e, ok := el.Value.(*entry[V])
+		if !ok {
+			panic("arc: invalid T2 entry type")
+		}
+		e.val = val
 		c.t2.MoveToFront(el)
 		return
 	}
@@ -126,7 +138,7 @@ func (c *Cache[V]) Put(key uint64, val V) {
 		if c.b1.Len() < c.b2.Len() {
 			delta = c.b2.Len() / c.b1.Len()
 		}
-		c.p = min(c.p+delta, c.capacity)
+		c.p = minInt(c.p+delta, c.capacity)
 		c.replace(key)
 		c.removeFromGhost(c.b1, c.b1Map, key)
 		nel := c.t2.PushFront(&entry[V]{key: key, val: val})
@@ -140,7 +152,7 @@ func (c *Cache[V]) Put(key uint64, val V) {
 		if c.b2.Len() < c.b1.Len() {
 			delta = c.b1.Len() / c.b2.Len()
 		}
-		c.p = max(c.p-delta, 0)
+		c.p = maxInt(c.p-delta, 0)
 		c.replace(key)
 		c.removeFromGhost(c.b2, c.b2Map, key)
 		nel := c.t2.PushFront(&entry[V]{key: key, val: val})
@@ -159,7 +171,11 @@ func (c *Cache[V]) Put(key uint64, val V) {
 			if c.b1.Len() > 0 {
 				back := c.b1.Back()
 				c.b1.Remove(back)
-				delete(c.b1Map, back.Value.(uint64))
+				k, ok := back.Value.(uint64)
+				if !ok {
+					panic("arc: invalid B1 key type")
+				}
+				delete(c.b1Map, k)
 			}
 			c.replace(key)
 		} else {
@@ -172,13 +188,21 @@ func (c *Cache[V]) Put(key uint64, val V) {
 			if c.b2.Len() > 0 {
 				back := c.b2.Back()
 				c.b2.Remove(back)
-				delete(c.b2Map, back.Value.(uint64))
+				k, ok := back.Value.(uint64)
+				if !ok {
+					panic("arc: invalid B2 key type")
+				}
+				delete(c.b2Map, k)
 			}
 		}
 		if c.b1.Len() > 0 {
 			back := c.b1.Back()
 			c.b1.Remove(back)
-			delete(c.b1Map, back.Value.(uint64))
+			k, ok := back.Value.(uint64)
+			if !ok {
+				panic("arc: invalid B1 key type")
+			}
+			delete(c.b1Map, k)
 		}
 	}
 
@@ -230,7 +254,11 @@ func (c *Cache[V]) evictFromT1() {
 		return
 	}
 	back := c.t1.Back()
-	key := back.Value.(*entry[V]).key
+	e, ok := back.Value.(*entry[V])
+	if !ok {
+		panic("arc: invalid T1 back entry type")
+	}
+	key := e.key
 	c.t1.Remove(back)
 	delete(c.t1Map, key)
 	// Add to ghost list B1.
@@ -243,7 +271,11 @@ func (c *Cache[V]) evictFromT2() {
 		return
 	}
 	back := c.t2.Back()
-	key := back.Value.(*entry[V]).key
+	e, ok := back.Value.(*entry[V])
+	if !ok {
+		panic("arc: invalid T2 back entry type")
+	}
+	key := e.key
 	c.t2.Remove(back)
 	delete(c.t2Map, key)
 	// Add to ghost list B2.
@@ -258,14 +290,14 @@ func (c *Cache[V]) removeFromGhost(l *list.List, m map[uint64]*list.Element, key
 	}
 }
 
-func min(a, b int) int {
+func minInt(a, b int) int {
 	if a < b {
 		return a
 	}
 	return b
 }
 
-func max(a, b int) int {
+func maxInt(a, b int) int {
 	if a > b {
 		return a
 	}

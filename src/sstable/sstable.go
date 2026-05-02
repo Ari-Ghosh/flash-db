@@ -82,7 +82,6 @@ const (
 	footerSize = 40
 )
 
-var le = binary.LittleEndian
 
 // IndexEntry points to a data block.
 type IndexEntry struct {
@@ -213,15 +212,15 @@ func (w *Writer) Close() error {
 
 	// Footer: 40 bytes.
 	footer := make([]byte, footerSize)
-	le.PutUint64(footer[0:], indexOffset)
-	le.PutUint32(footer[8:], uint32(len(indexBytes)))
-	le.PutUint64(footer[12:], bloomOffset)
-	le.PutUint32(footer[20:], uint32(len(bloomBytes)))
-	le.PutUint32(footer[24:], uint32(w.count))
+	binary.LittleEndian.PutUint64(footer[0:], indexOffset)
+	binary.LittleEndian.PutUint32(footer[8:], uint32(len(indexBytes)))
+	binary.LittleEndian.PutUint64(footer[12:], bloomOffset)
+	binary.LittleEndian.PutUint32(footer[20:], uint32(len(bloomBytes)))
+	binary.LittleEndian.PutUint32(footer[24:], uint32(w.count))
 	footer[28] = byte(w.codec)
 	// [29..31] padding
-	le.PutUint32(footer[32:], 0) // reserved
-	le.PutUint32(footer[36:], magic)
+	binary.LittleEndian.PutUint32(footer[32:], 0) // reserved
+	binary.LittleEndian.PutUint32(footer[36:], magic)
 
 	if _, err := w.bw.Write(footer); err != nil {
 		return err
@@ -275,25 +274,25 @@ func (r *Reader) loadMeta(path string) error {
 	if _, err := r.f.ReadAt(footer, fi.Size()-int64(footerSize)); err != nil {
 		return err
 	}
-	if le.Uint32(footer[36:]) != magic {
+	if binary.LittleEndian.Uint32(footer[36:]) != magic {
 		// Try legacy 32-byte footer for backward compatibility.
 		if fi.Size() >= 32 {
 			legacyFooter := make([]byte, 32)
 			if _, err := r.f.ReadAt(legacyFooter, fi.Size()-32); err != nil {
 				return err
 			}
-			if le.Uint32(legacyFooter[28:]) == 0xDEADBEEF {
+			if binary.LittleEndian.Uint32(legacyFooter[28:]) == 0xDEADBEEF {
 				return r.loadLegacyMeta(path, legacyFooter)
 			}
 		}
 		return fmt.Errorf("sstable: bad magic in %s", path)
 	}
 
-	indexOff := le.Uint64(footer[0:])
-	indexLen := le.Uint32(footer[8:])
-	bloomOff := le.Uint64(footer[12:])
-	bloomLen := le.Uint32(footer[20:])
-	count := le.Uint32(footer[24:])
+	indexOff := binary.LittleEndian.Uint64(footer[0:])
+	indexLen := binary.LittleEndian.Uint32(footer[8:])
+	bloomOff := binary.LittleEndian.Uint64(footer[12:])
+	bloomLen := binary.LittleEndian.Uint32(footer[20:])
+	count := binary.LittleEndian.Uint32(footer[24:])
 	r.meta.Codec = types.Codec(footer[28])
 
 	indexBuf := make([]byte, indexLen)
@@ -314,11 +313,11 @@ func (r *Reader) loadMeta(path string) error {
 
 // loadLegacyMeta handles v1 32-byte footer (codec = NoopCompressor).
 func (r *Reader) loadLegacyMeta(path string, footer []byte) error {
-	indexOff := le.Uint64(footer[0:])
-	indexLen := le.Uint32(footer[8:])
-	bloomOff := le.Uint64(footer[12:])
-	bloomLen := le.Uint32(footer[20:])
-	count := le.Uint32(footer[24:])
+	indexOff := binary.LittleEndian.Uint64(footer[0:])
+	indexLen := binary.LittleEndian.Uint32(footer[8:])
+	bloomOff := binary.LittleEndian.Uint64(footer[12:])
+	bloomLen := binary.LittleEndian.Uint32(footer[20:])
+	count := binary.LittleEndian.Uint32(footer[24:])
 
 	indexBuf := make([]byte, indexLen)
 	if _, err := r.f.ReadAt(indexBuf, int64(indexOff)); err != nil {
@@ -500,13 +499,13 @@ func encodeEntry(e types.Entry) []byte {
 	}
 	buf[off] = flags
 	off++
-	le.PutUint64(buf[off:], e.SeqNum)
+	binary.LittleEndian.PutUint64(buf[off:], e.SeqNum)
 	off += 8
-	le.PutUint32(buf[off:], uint32(len(e.Key)))
+	binary.LittleEndian.PutUint32(buf[off:], uint32(len(e.Key)))
 	off += 4
 	copy(buf[off:], e.Key)
 	off += len(e.Key)
-	le.PutUint32(buf[off:], uint32(len(e.Value)))
+	binary.LittleEndian.PutUint32(buf[off:], uint32(len(e.Value)))
 	off += 4
 	copy(buf[off:], e.Value)
 	return buf
@@ -519,9 +518,9 @@ func decodeEntry(buf []byte) (types.Entry, int, error) {
 	off := 0
 	flags := buf[off]
 	off++
-	seq := le.Uint64(buf[off:])
+	seq := binary.LittleEndian.Uint64(buf[off:])
 	off += 8
-	keyLen := int(le.Uint32(buf[off:]))
+	keyLen := int(binary.LittleEndian.Uint32(buf[off:]))
 	off += 4
 	if off+keyLen+4 > len(buf) {
 		return types.Entry{}, 0, fmt.Errorf("key overrun")
@@ -529,7 +528,7 @@ func decodeEntry(buf []byte) (types.Entry, int, error) {
 	key := make([]byte, keyLen)
 	copy(key, buf[off:])
 	off += keyLen
-	valLen := int(le.Uint32(buf[off:]))
+	valLen := int(binary.LittleEndian.Uint32(buf[off:]))
 	off += 4
 	if off+valLen > len(buf) {
 		return types.Entry{}, 0, fmt.Errorf("val overrun")
@@ -569,13 +568,13 @@ func encodeIndex(entries []IndexEntry) []byte {
 	for _, ie := range entries {
 		tmp := make([]byte, 4+len(ie.FirstKey)+8+4)
 		off := 0
-		le.PutUint32(tmp[off:], uint32(len(ie.FirstKey)))
+		binary.LittleEndian.PutUint32(tmp[off:], uint32(len(ie.FirstKey)))
 		off += 4
 		copy(tmp[off:], ie.FirstKey)
 		off += len(ie.FirstKey)
-		le.PutUint64(tmp[off:], ie.Offset)
+		binary.LittleEndian.PutUint64(tmp[off:], ie.Offset)
 		off += 8
-		le.PutUint32(tmp[off:], ie.Length)
+		binary.LittleEndian.PutUint32(tmp[off:], ie.Length)
 		buf = append(buf, tmp...)
 	}
 	return buf
@@ -588,7 +587,7 @@ func decodeIndex(buf []byte) []IndexEntry {
 		if off+4 > len(buf) {
 			break
 		}
-		kl := int(le.Uint32(buf[off:]))
+		kl := int(binary.LittleEndian.Uint32(buf[off:]))
 		off += 4
 		if off+kl+12 > len(buf) {
 			break
@@ -596,9 +595,9 @@ func decodeIndex(buf []byte) []IndexEntry {
 		key := make([]byte, kl)
 		copy(key, buf[off:])
 		off += kl
-		offset := le.Uint64(buf[off:])
+		offset := binary.LittleEndian.Uint64(buf[off:])
 		off += 8
-		length := le.Uint32(buf[off:])
+		length := binary.LittleEndian.Uint32(buf[off:])
 		off += 4
 		entries = append(entries, IndexEntry{FirstKey: key, Offset: offset, Length: length})
 	}
