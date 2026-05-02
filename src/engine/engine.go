@@ -164,6 +164,11 @@ type DB struct {
 	memtable *memtable.MemTable
 	imm      *memtable.MemTable
 
+	// Column family registry (loaded at Open, persisted on CreateColumnFamily).
+	cfReg *cfRegistry
+	// Secondary index manager (definitions registered in memory only).
+	idxMgr *indexManager
+
 	walActive *wal.WAL
 	l0Mu      sync.Mutex
 	l0Files   []string
@@ -177,9 +182,6 @@ type DB struct {
 
 	leader   *replication.Leader   // nil if not configured
 	follower *replication.Follower // nil if not configured
-
-	cfReg  *cfRegistry
-	idxMgr *indexManager
 
 	bgErr     atomic.Value
 	closeOnce sync.Once
@@ -240,13 +242,9 @@ func Open(cfg Config) (*DB, error) {
 		bloomTelemetry: bt,
 		closeCh:        make(chan struct{}),
 		flushDone:      make(chan struct{}, 1),
+		cfReg:          newCFRegistry(),
+		idxMgr:         newIndexManager(),
 	}
-
-	db.cfReg = newCFRegistry()
-	if err := db.cfReg.load(db); err != nil {
-		return nil, err
-	}
-	db.idxMgr = newIndexManager()
 
 	compCfg := compaction.Config{
 		L0Threshold:     cfg.L0CompactThreshold,
@@ -260,6 +258,12 @@ func Open(cfg Config) (*DB, error) {
 	}
 	db.discoverL0Files()
 
+	// Load persisted column-family names.
+	if err := db.cfReg.load(db); err != nil {
+		return nil, fmt.Errorf("engine: cf registry: %w", err)
+	}
+
+	// Start the background TTL reaper.
 	db.startTTLReaper()
 
 	// Start replication if configured.
@@ -418,55 +422,6 @@ func (db *DB) ApplyTxn(txnID, txnSeq uint64, ops []txn.TxnOp) error {
 	return nil
 }
 
-// ── WriteBatch ───────────────────────────────────────────────────────────────
-
-type WriteBatch struct {
-	db  *DB
-	ops []txn.TxnOp
-}
-
-func (db *DB) NewWriteBatch() *WriteBatch {
-	return &WriteBatch{db: db}
-}
-
-func (wb *WriteBatch) putRaw(key, value []byte) {
-	wb.ops = append(wb.ops, txn.TxnOp{Key: key, Value: value, Tombstone: false})
-}
-
-func (wb *WriteBatch) Put(key, value []byte) {
-	wb.ops = append(wb.ops, txn.TxnOp{Key: key, Value: value, Tombstone: false})
-}
-
-func (wb *WriteBatch) Delete(key []byte) {
-	wb.ops = append(wb.ops, txn.TxnOp{Key: key, Value: nil, Tombstone: true})
-}
-
-func (wb *WriteBatch) deleteRaw(key []byte) {
-	wb.ops = append(wb.ops, txn.TxnOp{Key: key, Value: nil, Tombstone: true})
-}
-
-func (wb *WriteBatch) Commit() error {
-	if len(wb.ops) == 0 {
-		return nil
-	}
-	txnID := wb.db.txnSeq.Add(1)
-	seq := wb.db.seq.Add(1)
-	for i := range wb.ops {
-		wb.ops[i].SeqNum = seq
-	}
-	return wb.db.ApplyTxn(txnID, seq, wb.ops)
-}
-
-// ── Internal methods ──────────────────────────────────────────────────────────
-
-func (db *DB) getRaw(key []byte) ([]byte, error) {
-	return db.Get(key)
-}
-
-func (db *DB) putRaw(key, value []byte) error {
-	return db.Put(key, value)
-}
-
 // ── Write path ────────────────────────────────────────────────────────────────
 
 // Put writes key=value into the DB.
@@ -526,6 +481,13 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 
 // GetAt returns the value for key as of seqNum (MVCC point-in-time read).
 func (db *DB) GetAt(key []byte, seqNum uint64) ([]byte, error) {
+	// TTL expiry check. Skip it for internal metadata keys (ttl, idx, cf_meta
+	// prefixes) to avoid infinite recursion, but DO apply it to CF-namespaced
+	// user keys (which also start with \x00cf\x00...).
+	if !isInternalMetaKey(key) && db.checkExpiry(key) {
+		return nil, types.ErrKeyNotFound
+	}
+
 	if e, err := db.memtable.GetAt(key, seqNum); err == nil {
 		if e.Tombstone {
 			return nil, types.ErrKeyDeleted
@@ -659,6 +621,19 @@ func (db *DB) PrefixScan(prefix []byte) (types.Iterator, error) {
 		return nil, fmt.Errorf("prefix must not be empty") //nolint:err113
 	}
 	return db.NewIterator(types.IteratorOptions{Prefix: prefix})
+}
+
+// isInternalMetaKey returns true for keys that belong to flashDB's internal
+// metadata namespaces (TTL, index, CF registry).  These keys must never be
+// subject to TTL expiry checks or other user-key logic.
+func isInternalMetaKey(key []byte) bool {
+	if len(key) == 0 || key[0] != 0x00 {
+		return false // plain user key
+	}
+	s := string(key)
+	return len(s) >= len(ttlPrefixMark) && s[:len(ttlPrefixMark)] == ttlPrefixMark ||
+		len(s) >= len(idxPrefixMark) && s[:len(idxPrefixMark)] == idxPrefixMark ||
+		s == cfMetaSysKey
 }
 
 // prefixUpperBound returns the smallest key strictly greater than all keys
@@ -880,6 +855,73 @@ func (db *DB) checkClosed() error {
 	default:
 		return nil
 	}
+}
+
+// ── Internal raw key helpers ───────────────────────────────────────────────────
+
+// getRaw reads a raw (potentially system-prefixed) key bypassing TTL checks.
+// Used by TTL / index / CF registry code.
+func (db *DB) getRaw(key []byte) ([]byte, error) {
+	seqNum := db.seq.Load()
+	if e, err := db.memtable.GetAt(key, seqNum); err == nil {
+		if e.Tombstone {
+			return nil, types.ErrKeyDeleted
+		}
+		return e.Value, nil
+	}
+	db.writeMu.Lock()
+	imm := db.imm
+	db.writeMu.Unlock()
+	if imm != nil {
+		if e, err := imm.GetAt(key, seqNum); err == nil {
+			if e.Tombstone {
+				return nil, types.ErrKeyDeleted
+			}
+			return e.Value, nil
+		}
+	}
+	db.l0Mu.Lock()
+	l0Files := make([]string, len(db.l0Files))
+	copy(l0Files, db.l0Files)
+	db.l0Mu.Unlock()
+	for i := len(l0Files) - 1; i >= 0; i-- {
+		r, err := sstable.OpenReader(l0Files[i])
+		if err == nil {
+			e, err := r.Get(key)
+			_ = r.Close()
+			if err == nil && e.SeqNum <= seqNum {
+				if e.Tombstone {
+					return nil, types.ErrKeyDeleted
+				}
+				return e.Value, nil
+			}
+		}
+	}
+	if e, err := db.l1Tree.Get(key); err == nil && e.SeqNum <= seqNum {
+		if e.Tombstone {
+			return nil, types.ErrKeyDeleted
+		}
+		return e.Value, nil
+	}
+	if e, err := db.l2Tree.Get(key); err == nil && e.SeqNum <= seqNum {
+		if e.Tombstone {
+			return nil, types.ErrKeyDeleted
+		}
+		return e.Value, nil
+	}
+	return nil, types.ErrKeyNotFound
+}
+
+// putRaw writes a raw key=value pair (used by TTL and CF registry code).
+func (db *DB) putRaw(key, value []byte) error {
+	if err := db.checkClosed(); err != nil {
+		return err
+	}
+	seq := db.seq.Add(1)
+	if err := db.walActive.AppendPut(seq, key, value); err != nil {
+		return err
+	}
+	return db.memtable.Put(key, value, seq)
 }
 
 // Err returns the first background error (flush/compaction), if any.
