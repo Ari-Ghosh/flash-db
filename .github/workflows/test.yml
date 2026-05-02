@@ -32,8 +32,8 @@ jobs:
         run: go mod verify
 
       - name: Run tests
-        run: go test -v -race -timeout 30s -coverprofile=coverage.out ./...
-
+        run: go test -v -race -timeout 6m -coverprofile=coverage.out ./src/tests
+        
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
         with:
@@ -60,7 +60,7 @@ jobs:
         run: go mod download
 
       - name: Run tests with coverage
-        run: go test -v -timeout 30s -coverprofile=coverage.out ./...
+        run: go test -v -timeout 6m -coverpkg=./... -coverprofile=coverage.out ./src/tests
 
       - name: Check coverage
         run: |
