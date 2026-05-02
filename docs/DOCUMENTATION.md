@@ -2,7 +2,7 @@
 
 **Project Status:** Core implementation complete (v3 with transactions, replication, backup/restore)  
 **Last Updated:** April 22, 2026  
-**Language:** Go 1.22.2
+**Language:** Go 1.25.8
 
 ---
 
