@@ -55,23 +55,30 @@ linters:
     paths:
       - vendor
       - docs
+    rules:
+      - path: _test\.go
+        linters:
+          - gocyclo
+          - errcheck
+          - dupl
+          - funlen
+          - godot
+      - source: "^func \\(.*\\) [A-Z]"
+        linters:
+          - unparam
 
   settings:
     errcheck:
       check-type-assertions: true
       check-blank: false
-
     gocyclo:
       min-complexity: 25
-
     funlen:
       lines: 100
       statements: 50
-
     lll:
       line-length: 120
       tab-width: 4
-
     gocritic:
       enabled-tags:
         - diagnostic
@@ -81,24 +88,20 @@ linters:
       disabled-checks:
         - hugeParam
         - ifElseChain
-
     gosec:
       excludes:
         - G404
         - G115
         - G102
         - G306
-
     revive:
       severity: warning
-
     godox:
       keywords:
         - TODO
         - FIXME
         - BUG
         - HACK
-
     tagliatelle:
       case:
         rules:
@@ -108,16 +111,3 @@ linters:
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-  
-  rules:
-    - path: _test\.go
-      linters:
-        - gocyclo
-        - errcheck
-        - dupl
-        - funlen
-        - godot
-
-    - source: "^func \\(.*\\) [A-Z]"
-      linters:
-        - unparam
