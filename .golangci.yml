@@ -1,21 +1,24 @@
+version: "2"
+
 run:
-  timeout: 5m
   tests: true
 
-# output:
-#   formats: colored-line-number
-#   print-issued-lines: true
-#   print-linter-name: true
+# Formatters have been completely separated from Linters in v2
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes: local/flashdb
 
 linters:
   enable:
     # Default linters
     - errcheck
-    - gosimple
     - govet
     - ineffassign
     - staticcheck
-    - typecheck
     - unused
     
     # Additional useful linters
@@ -24,7 +27,6 @@ linters:
     - dupl
     - errname
     - errorlint
-    # - exportloopref
     - copyloopvar
     - exhaustive
     - forcetypeassert
@@ -35,8 +37,6 @@ linters:
     - gocyclo
     - godot
     - godox
-    - gofmt
-    - goimports
     - gomodguard
     - goprintffuncname
     - gosec
@@ -54,63 +54,56 @@ linters:
     - wastedassign
     - whitespace
 
-linters-settings:
-  # Error checking
-  errcheck:
-    check-type-assertions: true
-    check-blank: false
+  # linters-settings is now nested directly under 'linters:'
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
 
-  # Code complexity
-  gocyclo:
-    min-complexity: 25
+    gocyclo:
+      min-complexity: 25
 
-  funlen:
-    lines: 100
-    statements: 50
+    funlen:
+      lines: 100
+      statements: 50
 
-  lll:
-    line-length: 120
-    tab-width: 4
+    lll:
+      line-length: 120
+      tab-width: 4
 
-  # Import formatting
-  goimports:
-    local-prefixes: local/flashdb
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - opinionated
+        - performance
+      disabled-checks:
+        - hugeParam
+        - ifElseChain
 
-  # Code style
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - style
-      - opinionated
-      - performance
-    disabled-checks:
-      - hugeParam
-      - ifElseChain
+    gosec:
+      excludes:
+        - G404
+        - G115
+        - G102
+        - G306
 
-  gosec:
-    excludes:
-      - G404
-      - G115
-      - G102
-      - G306
+    revive:
+      ignore-generated-header: true
+      severity: warning
 
-  revive:
-    ignore-generated-header: true
-    severity: warning
+    godox:
+      keywords:
+        - TODO
+        - FIXME
+        - BUG
+        - HACK
 
-  godox:
-    keywords:
-      - TODO
-      - FIXME
-      - BUG
-      - HACK
-
-  # Naming
-  tagliatelle:
-    case:
-      rules:
-        json: snake
-        yaml: snake
+    tagliatelle:
+      case:
+        rules:
+          json: snake
+          yaml: snake
 
 issues:
   exclude-dirs:
@@ -118,7 +111,6 @@ issues:
     - docs
 
   exclude-rules:
-    # Exclude some linters from running on test files
     - path: _test\.go
       linters:
         - gocyclo
@@ -126,12 +118,10 @@ issues:
         - dupl
         - funlen
 
-    # Exclude godot for test files
     - path: _test\.go
       linters:
         - godot
 
-    # Allow unused parameters in interfaces
     - source: "^func \\(.*\\) [A-Z]"
       linters:
         - unparam
