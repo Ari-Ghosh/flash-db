@@ -3,25 +3,22 @@ version: "2"
 run:
   tests: true
 
-# Formatters have been completely separated from Linters in v2
 formatters:
   enable:
     - gofmt
     - goimports
   settings:
     goimports:
-      local-prefixes: local/flashdb
+      local-prefixes:
+        - local/flashdb
 
 linters:
   enable:
-    # Default linters
     - errcheck
     - govet
     - ineffassign
     - staticcheck
     - unused
-    
-    # Additional useful linters
     - bodyclose
     - dogsled
     - dupl
@@ -54,7 +51,11 @@ linters:
     - wastedassign
     - whitespace
 
-  # linters-settings is now nested directly under 'linters:'
+  exclusions:
+    paths:
+      - vendor
+      - docs
+
   settings:
     errcheck:
       check-type-assertions: true
@@ -89,7 +90,6 @@ linters:
         - G306
 
     revive:
-      ignore-generated-header: true
       severity: warning
 
     godox:
@@ -106,25 +106,18 @@ linters:
           yaml: snake
 
 issues:
-  exclude-dirs:
-    - vendor
-    - docs
-
-  exclude-rules:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  
+  rules:
     - path: _test\.go
       linters:
         - gocyclo
         - errcheck
         - dupl
         - funlen
-
-    - path: _test\.go
-      linters:
         - godot
 
     - source: "^func \\(.*\\) [A-Z]"
       linters:
         - unparam
-
-  max-issues-per-linter: 0
-  max-same-issues: 0
