@@ -119,7 +119,7 @@ func runParallelWrites(db *engine.DB) error {
 	fmt.Println("── 1. Parallel writes ────────────────────────────────")
 	done := make(chan struct{})
 	for g := 0; g < 4; g++ {
-		g := g
+		// g := g
 		go func() {
 			for i := 0; i < 50; i++ {
 				if err := db.Put([]byte(fmt.Sprintf("par:g%d:k%d", g, i)), []byte("v")); err != nil {

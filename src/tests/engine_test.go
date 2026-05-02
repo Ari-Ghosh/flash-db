@@ -480,7 +480,7 @@ func TestConcurrentPuts(t *testing.T) {
 	errs := make(chan error, goroutines*perGoroutine)
 
 	for g := 0; g < goroutines; g++ {
-		g := g
+		// g := g
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -514,7 +514,7 @@ func TestConcurrentPutGet(t *testing.T) {
 
 	// Writers.
 	for i := 0; i < n; i++ {
-		i := i
+		// i := i
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -523,7 +523,7 @@ func TestConcurrentPutGet(t *testing.T) {
 	}
 	// Readers — should not panic or data-race.
 	for i := 0; i < n; i++ {
-		i := i
+		// i := i
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -578,7 +578,7 @@ func TestWALBatchThroughput(t *testing.T) {
 	start := time.Now()
 	var wg sync.WaitGroup
 	for i := 0; i < n; i++ {
-		i := i
+		// i := i
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -943,7 +943,7 @@ func TestWALGroupCommitCorrectness(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make(chan error, goroutines*perG)
 	for g := 0; g < goroutines; g++ {
-		g := g
+		// g := g
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -1163,7 +1163,7 @@ func TestTxnConcurrentNonConflicting(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make(chan error, 2)
 	for g := 0; g < 2; g++ {
-		g := g
+		// g := g
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -1973,7 +1973,7 @@ func TestWriteBatchConcurrent(t *testing.T) {
 	errs := make(chan error, goroutines*perG)
 
 	for g := 0; g < goroutines; g++ {
-		g := g
+		// g := g
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -2493,7 +2493,7 @@ func TestARCConcurrent(t *testing.T) {
 	c := arc.New[int](64)
 	var wg sync.WaitGroup
 	for g := 0; g < 20; g++ {
-		g := g
+		// g := g
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
