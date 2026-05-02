@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"time"
 
 	types "local/flashdb/src/types"
 )
@@ -209,8 +210,8 @@ func (cf *CF) Put(key, value []byte) error {
 }
 
 // PutWithTTL writes key=value with a TTL in this column family's namespace.
-func (cf *CF) PutWithTTL(key, value []byte, ttlNanos int64) error {
-	return cf.db.PutWithTTLNanos(cf.cfKey(key), value, ttlNanos)
+func (cf *CF) PutWithTTL(key, value []byte, ttl time.Duration) error {
+	return cf.db.PutWithTTL(cf.cfKey(key), value, ttl)
 }
 
 // Get returns the value for key in this column family.
