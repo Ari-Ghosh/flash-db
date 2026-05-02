@@ -178,6 +178,9 @@ type DB struct {
 	leader   *replication.Leader   // nil if not configured
 	follower *replication.Follower // nil if not configured
 
+	cfReg  *cfRegistry
+	idxMgr *indexManager
+
 	bgErr     atomic.Value
 	closeOnce sync.Once
 	closeCh   chan struct{}
@@ -239,6 +242,12 @@ func Open(cfg Config) (*DB, error) {
 		flushDone:      make(chan struct{}, 1),
 	}
 
+	db.cfReg = newCFRegistry()
+	if err := db.cfReg.load(db); err != nil {
+		return nil, err
+	}
+	db.idxMgr = newIndexManager()
+
 	compCfg := compaction.Config{
 		L0Threshold:     cfg.L0CompactThreshold,
 		L1SizeThreshold: cfg.L1SizeThreshold,
@@ -250,6 +259,8 @@ func Open(cfg Config) (*DB, error) {
 		return nil, fmt.Errorf("engine: replay: %w", err)
 	}
 	db.discoverL0Files()
+
+	db.startTTLReaper()
 
 	// Start replication if configured.
 	if cfg.Replication != nil {
@@ -405,6 +416,55 @@ func (db *DB) ApplyTxn(txnID, txnSeq uint64, ops []txn.TxnOp) error {
 		return err
 	}
 	return nil
+}
+
+// ── WriteBatch ───────────────────────────────────────────────────────────────
+
+type WriteBatch struct {
+	db  *DB
+	ops []txn.TxnOp
+}
+
+func (db *DB) NewWriteBatch() *WriteBatch {
+	return &WriteBatch{db: db}
+}
+
+func (wb *WriteBatch) putRaw(key, value []byte) {
+	wb.ops = append(wb.ops, txn.TxnOp{Key: key, Value: value, Tombstone: false})
+}
+
+func (wb *WriteBatch) Put(key, value []byte) {
+	wb.ops = append(wb.ops, txn.TxnOp{Key: key, Value: value, Tombstone: false})
+}
+
+func (wb *WriteBatch) Delete(key []byte) {
+	wb.ops = append(wb.ops, txn.TxnOp{Key: key, Value: nil, Tombstone: true})
+}
+
+func (wb *WriteBatch) deleteRaw(key []byte) {
+	wb.ops = append(wb.ops, txn.TxnOp{Key: key, Value: nil, Tombstone: true})
+}
+
+func (wb *WriteBatch) Commit() error {
+	if len(wb.ops) == 0 {
+		return nil
+	}
+	txnID := wb.db.txnSeq.Add(1)
+	seq := wb.db.seq.Add(1)
+	for i := range wb.ops {
+		wb.ops[i].SeqNum = seq
+	}
+	return wb.db.ApplyTxn(txnID, seq, wb.ops)
+}
+
+// ── Internal methods ──────────────────────────────────────────────────────────
+
+func (db *DB) getRaw(key []byte) ([]byte, error) {
+	return db.Get(key)
+}
+
+func (db *DB) putRaw(key, value []byte) error {
+	return db.Put(key, value)
 }
 
 // ── Write path ────────────────────────────────────────────────────────────────
