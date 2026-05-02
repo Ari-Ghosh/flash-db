@@ -593,7 +593,7 @@ go test ./src/tests/ -bench=. -benchtime=5s
 
 ## License
 
-MIT License
+Apache License 2.0
 
 ---
 
