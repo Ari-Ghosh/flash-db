@@ -24,7 +24,8 @@ linters:
     - dupl
     - errname
     - errorlint
-    - exportloopref
+    # - exportloopref
+    - copyloopvar
     - exhaustive
     - forcetypeassert
     - funlen
