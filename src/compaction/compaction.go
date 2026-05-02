@@ -381,7 +381,11 @@ func kWayMerge(readers []*sstable.Reader, oldestPinnedSeq uint64) ([]types.Entry
 
 	for h.Len() > 0 {
 		itemAny := heap.Pop(h)
-		item := itemAny.(heapItem)
+		item, ok := itemAny.(heapItem)
+		if !ok {
+			// unexpected type, skip or error
+			continue
+		}
 		e := item.entry
 
 		if next, ok := <-item.ch; ok {

@@ -15,7 +15,9 @@
 // MergedIterator ← MemTable ← L1 B-tree ← L2 B-tree
 //
 // ### Entry Points
-// Package engine is the top-level entry point for flashDB v3, exposing the DB struct with methods for Put/Get/Delete, transactions, snapshots, iterators, and backup. It also implements replication.Applier for follower nodes and backup.BackupSource for hot backups.
+// Package engine is the top-level entry point for flashDB v3, exposing the DB struct with methods for Put/Get/Delete,
+// transactions, snapshots, iterators, and backup. It also implements replication.Applier for follower nodes and
+// backup.BackupSource for hot backups.
 //
 //	Write path → WAL (group-commit) → MemTable → (flush) → L0 SSTable
 //	                                                              │
@@ -297,7 +299,7 @@ func (db *DB) startReplication(cfg *replication.Config) error {
 		db.follower = f
 		log.Printf("replication: follower connecting to %s", cfg.LeaderAddr)
 	default:
-		return fmt.Errorf("unknown replication role %q", cfg.Role) //nolint:err113
+		return fmt.Errorf("unknown replication role %q", cfg.Role) //nolint:err113 // no error to wrap
 	}
 	return nil
 }
@@ -618,7 +620,7 @@ func (db *DB) NewIterator(opts types.IteratorOptions) (types.Iterator, error) {
 // It is a convenience wrapper around NewIterator with IteratorOptions.Prefix set.
 func (db *DB) PrefixScan(prefix []byte) (types.Iterator, error) {
 	if len(prefix) == 0 {
-		return nil, fmt.Errorf("prefix must not be empty") //nolint:err113
+		return nil, fmt.Errorf("prefix must not be empty") //nolint:err113 // no error to wrap
 	}
 	return db.NewIterator(types.IteratorOptions{Prefix: prefix})
 }
@@ -769,7 +771,7 @@ func (db *DB) flushImmutable() error {
 		db.cfg.BloomFPRMin,
 		db.cfg.BloomFPRMax,
 	)
-	w, err := sstable.NewWriterWithFPR(path, uint(len(entries)), fpr) //nolint:gosec
+	w, err := sstable.NewWriterWithFPR(path, uint(len(entries)), fpr)
 	if err != nil {
 		return err
 	}

@@ -99,7 +99,7 @@ import (
 	"time"
 )
 
-// record kinds
+// record kinds.
 const (
 	KindPut       byte = 0
 	KindDelete    byte = 1
@@ -169,7 +169,7 @@ func Open(path string) (*WAL, error) {
 
 // OpenWithOptions opens or creates the WAL with explicit options.
 func OpenWithOptions(path string, opts Options) (*WAL, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("wal open %s: %w", path, err)
 	}

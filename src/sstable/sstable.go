@@ -82,7 +82,6 @@ const (
 	footerSize = 40
 )
 
-
 // IndexEntry points to a data block.
 type IndexEntry struct {
 	FirstKey []byte

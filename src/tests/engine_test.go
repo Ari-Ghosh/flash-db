@@ -63,6 +63,7 @@ import (
 	"testing"
 	"time"
 
+	"local/flashdb/src/arc"
 	"local/flashdb/src/backup"
 	"local/flashdb/src/bloom"
 	"local/flashdb/src/btree"
@@ -72,7 +73,6 @@ import (
 	"local/flashdb/src/replication"
 	"local/flashdb/src/sstable"
 	"local/flashdb/src/txn"
-	"local/flashdb/src/arc"
 	types "local/flashdb/src/types"
 	"local/flashdb/src/wal"
 )
@@ -774,7 +774,7 @@ func TestBTreeBulkLoad(t *testing.T) {
 		entries = append(entries, types.Entry{
 			Key:    []byte(fmt.Sprintf("k%04d", i)),
 			Value:  []byte(fmt.Sprintf("v%d", i)),
-			SeqNum: uint64(i + 1), //nolint:gosec // safe in tests
+			SeqNum: uint64(i + 1),
 		})
 	}
 
@@ -1928,11 +1928,11 @@ func BenchmarkIterator(b *testing.B) {
 // ─────────────────────────────────────────────────────────────────────────────
 // 8. Parallel writes via WriteBatch + WAL group-commit
 // ─────────────────────────────────────────────────────────────────────────────
- 
+
 func TestWriteBatchAtomic(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	wb := db.NewWriteBatch()
 	wb.Put([]byte("wb:a"), []byte("1"))
 	wb.Put([]byte("wb:b"), []byte("2"))
@@ -1940,38 +1940,38 @@ func TestWriteBatchAtomic(t *testing.T) {
 	if err := wb.Commit(); err != nil {
 		t.Fatalf("WriteBatch.Commit: %v", err)
 	}
- 
+
 	mustGet(t, db, "wb:a", "1")
 	mustGet(t, db, "wb:b", "2")
 	mustGet(t, db, "wb:c", "3")
 }
- 
+
 func TestWriteBatchDeleteInBatch(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	mustPut(t, db, "del:x", "exists")
- 
+
 	wb := db.NewWriteBatch()
 	wb.Put([]byte("del:y"), []byte("new"))
 	wb.Delete([]byte("del:x"))
 	if err := wb.Commit(); err != nil {
 		t.Fatal(err)
 	}
- 
+
 	mustNotFound(t, db, "del:x")
 	mustGet(t, db, "del:y", "new")
 }
- 
+
 func TestWriteBatchConcurrent(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	const goroutines = 30
 	const perG = 50
 	var wg sync.WaitGroup
 	errs := make(chan error, goroutines*perG)
- 
+
 	for g := 0; g < goroutines; g++ {
 		g := g
 		wg.Add(1)
@@ -1992,28 +1992,28 @@ func TestWriteBatchConcurrent(t *testing.T) {
 	for e := range errs {
 		t.Errorf("concurrent WriteBatch: %v", e)
 	}
- 
+
 	// Spot-check a few keys.
 	for g := 0; g < goroutines; g++ {
 		mustGet(t, db, fmt.Sprintf("pg%d:k0:a", g), "va")
 		mustGet(t, db, fmt.Sprintf("pg%d:k0:b", g), "vb")
 	}
 }
- 
+
 func TestWriteBatchEmptyIsNoop(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	wb := db.NewWriteBatch()
 	if err := wb.Commit(); err != nil {
 		t.Fatalf("empty WriteBatch should be a no-op, got: %v", err)
 	}
 }
- 
+
 func TestWriteBatchSurvivesRestart(t *testing.T) {
 	dir := tmpDir(t)
 	db := openDB(t, dir)
- 
+
 	wb := db.NewWriteBatch()
 	wb.Put([]byte("restart:a"), []byte("1"))
 	wb.Put([]byte("restart:b"), []byte("2"))
@@ -2021,21 +2021,21 @@ func TestWriteBatchSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Close()
- 
+
 	db2 := openDB(t, dir)
 	defer db2.Close()
 	mustGet(t, db2, "restart:a", "1")
 	mustGet(t, db2, "restart:b", "2")
 }
- 
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 9. Column-family / namespace support
 // ─────────────────────────────────────────────────────────────────────────────
- 
+
 func TestColumnFamilyBasic(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	if err := db.CreateColumnFamily("users"); err != nil {
 		t.Fatal(err)
 	}
@@ -2043,7 +2043,7 @@ func TestColumnFamilyBasic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
- 
+
 	if err := cf.Put([]byte("alice"), []byte("alice@example.com")); err != nil {
 		t.Fatal(err)
 	}
@@ -2055,11 +2055,11 @@ func TestColumnFamilyBasic(t *testing.T) {
 		t.Fatalf("got %q, want alice@example.com", v)
 	}
 }
- 
+
 func TestColumnFamilyIsolation(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	// Same key in two different column families must be independent.
 	if err := db.CreateColumnFamily("cf1"); err != nil {
 		t.Fatal(err)
@@ -2069,14 +2069,14 @@ func TestColumnFamilyIsolation(t *testing.T) {
 	}
 	cf1, _ := db.GetColumnFamily("cf1")
 	cf2, _ := db.GetColumnFamily("cf2")
- 
+
 	if err := cf1.Put([]byte("shared"), []byte("v1")); err != nil {
 		t.Fatal(err)
 	}
 	if err := cf2.Put([]byte("shared"), []byte("v2")); err != nil {
 		t.Fatal(err)
 	}
- 
+
 	v1, _ := cf1.Get([]byte("shared"))
 	v2, _ := cf2.Get([]byte("shared"))
 	if string(v1) != "v1" {
@@ -2085,47 +2085,47 @@ func TestColumnFamilyIsolation(t *testing.T) {
 	if string(v2) != "v2" {
 		t.Fatalf("cf2 shared = %q, want v2", v2)
 	}
- 
+
 	// Default namespace must also be unaffected.
 	mustNotFound(t, db, "shared")
 }
- 
+
 func TestColumnFamilyNotFoundBeforeCreate(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	_, err := db.GetColumnFamily("nonexistent")
 	if err == nil {
 		t.Fatal("expected error accessing non-existent CF")
 	}
 }
- 
+
 func TestColumnFamilyDelete(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	if err := db.CreateColumnFamily("orders"); err != nil {
 		t.Fatal(err)
 	}
 	cf, _ := db.GetColumnFamily("orders")
 	_ = cf.Put([]byte("order:1"), []byte("data1"))
 	_ = cf.Delete([]byte("order:1"))
- 
+
 	_, err := cf.Get([]byte("order:1"))
 	if err == nil {
 		t.Fatal("expected key-not-found after CF delete")
 	}
 }
- 
+
 func TestColumnFamilyIterator(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	if err := db.CreateColumnFamily("metrics"); err != nil {
 		t.Fatal(err)
 	}
 	cf, _ := db.GetColumnFamily("metrics")
- 
+
 	keys := []string{"cpu", "disk", "mem", "net"}
 	for _, k := range keys {
 		if err := cf.Put([]byte(k), []byte(k+"_val")); err != nil {
@@ -2134,20 +2134,20 @@ func TestColumnFamilyIterator(t *testing.T) {
 	}
 	// Put a key in the default namespace with the same name — must not appear.
 	mustPut(t, db, "cpu", "default_cpu")
- 
+
 	iter, err := cf.NewIterator(types.IteratorOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer iter.Close()
- 
+
 	var got []string
 	for iter.Valid() {
 		got = append(got, string(iter.Key()))
 		iter.Next()
 	}
 	sort.Strings(got)
- 
+
 	if len(got) != len(keys) {
 		t.Fatalf("CF iterator: got %v, want %v", got, keys)
 	}
@@ -2157,21 +2157,21 @@ func TestColumnFamilyIterator(t *testing.T) {
 		}
 	}
 }
- 
+
 func TestColumnFamilyPersists(t *testing.T) {
 	dir := tmpDir(t)
 	db := openDB(t, dir)
- 
+
 	if err := db.CreateColumnFamily("persistent"); err != nil {
 		t.Fatal(err)
 	}
 	cf, _ := db.GetColumnFamily("persistent")
 	_ = cf.Put([]byte("k"), []byte("v"))
 	db.Close()
- 
+
 	db2 := openDB(t, dir)
 	defer db2.Close()
- 
+
 	// CF must still exist after restart.
 	cf2, err := db2.GetColumnFamily("persistent")
 	if err != nil {
@@ -2185,24 +2185,24 @@ func TestColumnFamilyPersists(t *testing.T) {
 		t.Fatalf("got %q, want v", v)
 	}
 }
- 
+
 func TestColumnFamilyListAndDrop(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	_ = db.CreateColumnFamily("alpha")
 	_ = db.CreateColumnFamily("beta")
 	_ = db.CreateColumnFamily("gamma")
- 
+
 	names := db.ListColumnFamilies()
 	if len(names) != 3 {
 		t.Fatalf("expected 3 CFs, got %v", names)
 	}
- 
+
 	// Drop beta and verify its keys are gone.
 	cfBeta, _ := db.GetColumnFamily("beta")
 	_ = cfBeta.Put([]byte("key"), []byte("betaval"))
- 
+
 	if err := db.DropColumnFamily("beta"); err != nil {
 		t.Fatal(err)
 	}
@@ -2218,15 +2218,15 @@ func TestColumnFamilyListAndDrop(t *testing.T) {
 		t.Fatal("expected error accessing dropped CF")
 	}
 }
- 
+
 func TestColumnFamilyIdempotentCreate(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	_ = db.CreateColumnFamily("idm")
 	cf1, _ := db.GetColumnFamily("idm")
 	_ = cf1.Put([]byte("x"), []byte("1"))
- 
+
 	// Calling CreateColumnFamily again must not wipe the data.
 	if err := db.CreateColumnFamily("idm"); err != nil {
 		t.Fatal(err)
@@ -2237,41 +2237,41 @@ func TestColumnFamilyIdempotentCreate(t *testing.T) {
 		t.Fatalf("idempotent create wiped data: got %q %v", v, err)
 	}
 }
- 
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 10. Key TTL and time-to-live expiry
 // ─────────────────────────────────────────────────────────────────────────────
- 
+
 func TestTTLExpiry(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	if err := db.PutWithTTL([]byte("expires"), []byte("soon"), 50*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
- 
+
 	// Key should be visible immediately.
 	mustGet(t, db, "expires", "soon")
- 
+
 	// After TTL elapses it should vanish.
 	time.Sleep(100 * time.Millisecond)
 	mustNotFound(t, db, "expires")
 }
- 
+
 func TestTTLNotExpiredYet(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	if err := db.PutWithTTL([]byte("long"), []byte("lived"), 10*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	mustGet(t, db, "long", "lived")
 }
- 
+
 func TestTTLOf(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	if err := db.PutWithTTL([]byte("ttlcheck"), []byte("v"), time.Second); err != nil {
 		t.Fatal(err)
 	}
@@ -2283,41 +2283,41 @@ func TestTTLOf(t *testing.T) {
 		t.Fatalf("unexpected remaining TTL: %v", remaining)
 	}
 }
- 
+
 func TestTTLOfNoTTL(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	mustPut(t, db, "notttl", "v")
 	_, err := db.TTLOf([]byte("notttl"))
 	if err == nil {
 		t.Fatal("expected error for key with no TTL")
 	}
 }
- 
+
 func TestExpireAt(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	mustPut(t, db, "expireat", "v")
- 
+
 	deadline := time.Now().Add(30 * time.Millisecond)
 	if err := db.ExpireAt([]byte("expireat"), deadline); err != nil {
 		t.Fatal(err)
 	}
- 
+
 	mustGet(t, db, "expireat", "v")
 	time.Sleep(80 * time.Millisecond)
 	mustNotFound(t, db, "expireat")
 }
- 
+
 func TestTTLColumnFamilyKey(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	_ = db.CreateColumnFamily("ttlcf")
 	cf, _ := db.GetColumnFamily("ttlcf")
- 
+
 	if err := cf.PutWithTTL([]byte("tempkey"), []byte("temp"), 50*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
@@ -2331,26 +2331,26 @@ func TestTTLColumnFamilyKey(t *testing.T) {
 		t.Fatal("expected CF key to expire")
 	}
 }
- 
+
 func TestTTLDoesNotAffectOtherKeys(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	mustPut(t, db, "permanent", "stays")
 	if err := db.PutWithTTL([]byte("temp"), []byte("goes"), 30*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
- 
+
 	time.Sleep(60 * time.Millisecond)
- 
+
 	mustGet(t, db, "permanent", "stays")
 	mustNotFound(t, db, "temp")
 }
- 
+
 func TestTTLOverwrite(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	// Write with short TTL, then overwrite with a long TTL.
 	if err := db.PutWithTTL([]byte("overwrite"), []byte("v1"), 30*time.Millisecond); err != nil {
 		t.Fatal(err)
@@ -2363,17 +2363,17 @@ func TestTTLOverwrite(t *testing.T) {
 	// Key should still be visible with the new value.
 	mustGet(t, db, "overwrite", "v2")
 }
- 
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 11. ARC block cache
 // ─────────────────────────────────────────────────────────────────────────────
- 
+
 func TestARCBasicGetPut(t *testing.T) {
 	c := arc.New[int](4)
- 
+
 	c.Put(1, 100)
 	c.Put(2, 200)
- 
+
 	if v, ok := c.Get(1); !ok || v != 100 {
 		t.Fatalf("Get(1) = %v %v, want 100 true", v, ok)
 	}
@@ -2384,10 +2384,10 @@ func TestARCBasicGetPut(t *testing.T) {
 		t.Fatal("Get(99) should be a miss")
 	}
 }
- 
+
 func TestARCCapacityEviction(t *testing.T) {
 	c := arc.New[int](3)
- 
+
 	// Fill cache.
 	c.Put(1, 1)
 	c.Put(2, 2)
@@ -2397,12 +2397,12 @@ func TestARCCapacityEviction(t *testing.T) {
 	c.Get(2)
 	// Insert a new key – should evict 3 (least recently / frequently used).
 	c.Put(4, 4)
- 
+
 	if c.Len() > 3 {
 		t.Fatalf("cache grew beyond capacity: len=%d", c.Len())
 	}
 }
- 
+
 func TestARCUpdate(t *testing.T) {
 	c := arc.New[string](4)
 	c.Put(1, "a")
@@ -2412,7 +2412,7 @@ func TestARCUpdate(t *testing.T) {
 		t.Fatalf("after update: got %q %v, want b true", v, ok)
 	}
 }
- 
+
 func TestARCRemove(t *testing.T) {
 	c := arc.New[int](4)
 	c.Put(1, 10)
@@ -2421,7 +2421,7 @@ func TestARCRemove(t *testing.T) {
 		t.Fatal("key should be gone after Remove")
 	}
 }
- 
+
 func TestARCAdaptation(t *testing.T) {
 	// Demonstrate that ARC adapts: after a recency-heavy workload the cache
 	// returns more recency hits; after a frequency-heavy workload it returns
@@ -2444,7 +2444,7 @@ func TestARCAdaptation(t *testing.T) {
 		t.Fatalf("after hot-set reads, len %d exceeds capacity", c.Len())
 	}
 }
- 
+
 func TestARCBTreeIntegration(t *testing.T) {
 	// Verify the B-tree uses the ARC cache for page lookups.
 	dir := tmpDir(t)
@@ -2453,7 +2453,7 @@ func TestARCBTreeIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer bt.Close()
- 
+
 	var entries []types.Entry
 	for i := 0; i < 200; i++ {
 		entries = append(entries, types.Entry{
@@ -2465,7 +2465,7 @@ func TestARCBTreeIntegration(t *testing.T) {
 	if err := bt.BulkLoad(entries); err != nil {
 		t.Fatal(err)
 	}
- 
+
 	// Read all entries – warm the ARC cache.
 	for _, e := range entries {
 		got, err := bt.Get(e.Key)
@@ -2476,7 +2476,7 @@ func TestARCBTreeIntegration(t *testing.T) {
 			t.Fatalf("Get(%q) = %q, want %q", e.Key, got.Value, e.Value)
 		}
 	}
- 
+
 	// Read again – should come from ARC cache.
 	for _, e := range entries[:10] {
 		got, err := bt.Get(e.Key)
@@ -2488,7 +2488,7 @@ func TestARCBTreeIntegration(t *testing.T) {
 		}
 	}
 }
- 
+
 func TestARCConcurrent(t *testing.T) {
 	c := arc.New[int](64)
 	var wg sync.WaitGroup
@@ -2509,11 +2509,11 @@ func TestARCConcurrent(t *testing.T) {
 		t.Fatalf("concurrent: cache len %d exceeds capacity 64", c.Len())
 	}
 }
- 
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 12. Secondary indexes
 // ─────────────────────────────────────────────────────────────────────────────
- 
+
 // emailIndex extracts the value (email) as a single index key.
 func emailIndex(_, value []byte) [][]byte {
 	if len(value) == 0 {
@@ -2521,7 +2521,7 @@ func emailIndex(_, value []byte) [][]byte {
 	}
 	return [][]byte{value}
 }
- 
+
 // prefixIndex extracts the first 3 bytes of the value as an index key.
 func prefixIndex(_, value []byte) [][]byte {
 	if len(value) < 3 {
@@ -2531,15 +2531,15 @@ func prefixIndex(_, value []byte) [][]byte {
 	copy(k, value[:3])
 	return [][]byte{k}
 }
- 
+
 func TestIndexDefineAndQuery(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	if err := db.DefineIndex(engine.IndexDefinition{Name: "by_email", KeyFn: emailIndex}); err != nil {
 		t.Fatal(err)
 	}
- 
+
 	if err := db.PutIndexed([]byte("user:1"), []byte("alice@example.com")); err != nil {
 		t.Fatal(err)
 	}
@@ -2549,7 +2549,7 @@ func TestIndexDefineAndQuery(t *testing.T) {
 	if err := db.PutIndexed([]byte("user:3"), []byte("alice@example.com")); err != nil {
 		t.Fatal(err)
 	}
- 
+
 	pkeys, err := db.QueryByIndex("by_email", []byte("alice@example.com"))
 	if err != nil {
 		t.Fatal(err)
@@ -2563,7 +2563,7 @@ func TestIndexDefineAndQuery(t *testing.T) {
 	if string(pkeys[0]) != "user:1" || string(pkeys[1]) != "user:3" {
 		t.Fatalf("unexpected primary keys: %v", pkeys)
 	}
- 
+
 	// No results for unknown email.
 	pkeys2, err := db.QueryByIndex("by_email", []byte("nobody@example.com"))
 	if err != nil {
@@ -2573,15 +2573,15 @@ func TestIndexDefineAndQuery(t *testing.T) {
 		t.Fatalf("expected 0, got %d", len(pkeys2))
 	}
 }
- 
+
 func TestIndexUpdateRemovesOldEntry(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	if err := db.DefineIndex(engine.IndexDefinition{Name: "by_val", KeyFn: emailIndex}); err != nil {
 		t.Fatal(err)
 	}
- 
+
 	if err := db.PutIndexed([]byte("doc:1"), []byte("oldval")); err != nil {
 		t.Fatal(err)
 	}
@@ -2589,52 +2589,52 @@ func TestIndexUpdateRemovesOldEntry(t *testing.T) {
 	if err := db.PutIndexed([]byte("doc:1"), []byte("newval")); err != nil {
 		t.Fatal(err)
 	}
- 
+
 	// Old index entry must be gone.
 	old, _ := db.QueryByIndex("by_val", []byte("oldval"))
 	if len(old) != 0 {
 		t.Fatalf("old index entry survived update: %v", old)
 	}
- 
+
 	// New index entry must exist.
 	n, _ := db.QueryByIndex("by_val", []byte("newval"))
 	if len(n) != 1 || string(n[0]) != "doc:1" {
 		t.Fatalf("new index entry missing: %v", n)
 	}
 }
- 
+
 func TestIndexDeleteRemovesEntry(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	if err := db.DefineIndex(engine.IndexDefinition{Name: "by_v", KeyFn: emailIndex}); err != nil {
 		t.Fatal(err)
 	}
- 
+
 	_ = db.PutIndexed([]byte("del:1"), []byte("thevalue"))
 	_ = db.DeleteIndexed([]byte("del:1"))
- 
+
 	pkeys, _ := db.QueryByIndex("by_v", []byte("thevalue"))
 	if len(pkeys) != 0 {
 		t.Fatalf("index entry survived delete: %v", pkeys)
 	}
 	mustNotFound(t, db, "del:1")
 }
- 
+
 func TestIndexRangeQuery(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	// Index value = first 3 bytes of value (e.g. "aaa", "bbb", "ccc").
 	if err := db.DefineIndex(engine.IndexDefinition{Name: "by_prefix", KeyFn: prefixIndex}); err != nil {
 		t.Fatal(err)
 	}
- 
+
 	_ = db.PutIndexed([]byte("k:1"), []byte("aaaxxx"))
 	_ = db.PutIndexed([]byte("k:2"), []byte("bbbxxx"))
 	_ = db.PutIndexed([]byte("k:3"), []byte("cccxxx"))
 	_ = db.PutIndexed([]byte("k:4"), []byte("dddxxx"))
- 
+
 	// Query range [bbb, ddd) — expect k:2 and k:3.
 	pkeys, err := db.RangeQueryByIndex("by_prefix", []byte("bbb"), []byte("ddd"))
 	if err != nil {
@@ -2648,16 +2648,16 @@ func TestIndexRangeQuery(t *testing.T) {
 		t.Fatalf("range query keys: %v", pkeys)
 	}
 }
- 
+
 func TestIndexRebuild(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	// Write data BEFORE defining the index.
 	mustPut(t, db, "r:1", "alpha")
 	mustPut(t, db, "r:2", "beta")
 	mustPut(t, db, "r:3", "alpha")
- 
+
 	// Now define and rebuild the index.
 	if err := db.DefineIndex(engine.IndexDefinition{Name: "by_word", KeyFn: emailIndex}); err != nil {
 		t.Fatal(err)
@@ -2665,7 +2665,7 @@ func TestIndexRebuild(t *testing.T) {
 	if err := db.RebuildIndex("by_word"); err != nil {
 		t.Fatal(err)
 	}
- 
+
 	pkeys, err := db.QueryByIndex("by_word", []byte("alpha"))
 	if err != nil {
 		t.Fatal(err)
@@ -2674,21 +2674,21 @@ func TestIndexRebuild(t *testing.T) {
 		t.Fatalf("rebuild: expected 2 results for 'alpha', got %d: %v", len(pkeys), pkeys)
 	}
 }
- 
+
 func TestIndexDropRemovesAllEntries(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	if err := db.DefineIndex(engine.IndexDefinition{Name: "todrop", KeyFn: emailIndex}); err != nil {
 		t.Fatal(err)
 	}
 	_ = db.PutIndexed([]byte("d:1"), []byte("v1"))
 	_ = db.PutIndexed([]byte("d:2"), []byte("v2"))
- 
+
 	if err := db.DropIndex("todrop"); err != nil {
 		t.Fatal(err)
 	}
- 
+
 	// After drop, querying must return an error (index not defined).
 	_, err := db.QueryByIndex("todrop", []byte("v1"))
 	_ = err // not an error condition we need to test (implementation detail);
@@ -2696,11 +2696,11 @@ func TestIndexDropRemovesAllEntries(t *testing.T) {
 	mustGet(t, db, "d:1", "v1")
 	mustGet(t, db, "d:2", "v2")
 }
- 
+
 func TestIndexMultipleIndexes(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	// Two indexes on different aspects of the same value.
 	// Value format: "<email>:<role>"
 	emailFn := func(_, v []byte) [][]byte {
@@ -2719,14 +2719,14 @@ func TestIndexMultipleIndexes(t *testing.T) {
 		}
 		return nil
 	}
- 
+
 	_ = db.DefineIndex(engine.IndexDefinition{Name: "by_email2", KeyFn: emailFn})
 	_ = db.DefineIndex(engine.IndexDefinition{Name: "by_role", KeyFn: roleFn})
- 
+
 	_ = db.PutIndexed([]byte("u:1"), []byte("alice@x.com:admin"))
 	_ = db.PutIndexed([]byte("u:2"), []byte("bob@x.com:user"))
 	_ = db.PutIndexed([]byte("u:3"), []byte("carol@x.com:admin"))
- 
+
 	admins, _ := db.QueryByIndex("by_role", []byte("admin"))
 	if len(admins) != 2 {
 		t.Fatalf("by_role admin: expected 2, got %d: %v", len(admins), admins)
@@ -2736,18 +2736,18 @@ func TestIndexMultipleIndexes(t *testing.T) {
 		t.Fatalf("by_email2 bob: expected [u:2], got %v", bobs)
 	}
 }
- 
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Cross-feature integration tests
 // ─────────────────────────────────────────────────────────────────────────────
- 
+
 func TestCFWithTTL(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	_ = db.CreateColumnFamily("sessions")
 	cf, _ := db.GetColumnFamily("sessions")
- 
+
 	_ = cf.PutWithTTL([]byte("sess:abc"), []byte("user1"), 50*time.Millisecond)
 	v, _ := cf.Get([]byte("sess:abc"))
 	if string(v) != "user1" {
@@ -2759,42 +2759,42 @@ func TestCFWithTTL(t *testing.T) {
 		t.Fatal("session should have expired")
 	}
 }
- 
+
 func TestIndexWithWriteBatch(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	defer db.Close()
- 
+
 	_ = db.DefineIndex(engine.IndexDefinition{Name: "batch_idx", KeyFn: emailIndex})
- 
+
 	// Use a WriteBatch for the puts, then check index (note: WriteBatch bypasses
 	// index maintenance, so we use PutIndexed here to be explicit).
 	_ = db.PutIndexed([]byte("batchidx:1"), []byte("val1"))
 	_ = db.PutIndexed([]byte("batchidx:2"), []byte("val1"))
- 
+
 	pkeys, _ := db.QueryByIndex("batch_idx", []byte("val1"))
 	if len(pkeys) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(pkeys))
 	}
 }
- 
+
 func TestAllFeaturesWithRestart(t *testing.T) {
 	dir := tmpDir(t)
 	db := openDB(t, dir)
- 
+
 	// Column family.
 	_ = db.CreateColumnFamily("persist_cf")
 	cf, _ := db.GetColumnFamily("persist_cf")
 	_ = cf.Put([]byte("cfk"), []byte("cfv"))
- 
+
 	// WriteBatch.
 	wb := db.NewWriteBatch()
 	wb.Put([]byte("wb:restart"), []byte("ok"))
 	_ = wb.Commit()
- 
+
 	db.Close()
 	db2 := openDB(t, dir)
 	defer db2.Close()
- 
+
 	// CF must survive.
 	cf2, err := db2.GetColumnFamily("persist_cf")
 	if err != nil {
@@ -2804,21 +2804,21 @@ func TestAllFeaturesWithRestart(t *testing.T) {
 	if err != nil || string(v) != "cfv" {
 		t.Fatalf("CF value after restart: %q %v", v, err)
 	}
- 
+
 	// WriteBatch key must survive.
 	mustGet(t, db2, "wb:restart", "ok")
 }
- 
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Benchmarks
 // ─────────────────────────────────────────────────────────────────────────────
- 
+
 func BenchmarkWriteBatch10(b *testing.B) {
 	dir, _ := os.MkdirTemp("", "bench_wb_*")
 	defer os.RemoveAll(dir)
 	db, _ := engine.Open(engine.DefaultConfig(dir))
 	defer db.Close()
- 
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		wb := db.NewWriteBatch()
@@ -2828,7 +2828,7 @@ func BenchmarkWriteBatch10(b *testing.B) {
 		_ = wb.Commit()
 	}
 }
- 
+
 func BenchmarkARCGet(b *testing.B) {
 	c := arc.New[[]byte](1024)
 	for i := 0; i < 1024; i++ {
@@ -2839,14 +2839,14 @@ func BenchmarkARCGet(b *testing.B) {
 		c.Get(uint64(i % 1024))
 	}
 }
- 
+
 func BenchmarkIndexedPut(b *testing.B) {
 	dir, _ := os.MkdirTemp("", "bench_idx_*")
 	defer os.RemoveAll(dir)
 	db, _ := engine.Open(engine.DefaultConfig(dir))
 	defer db.Close()
 	_ = db.DefineIndex(engine.IndexDefinition{Name: "bench", KeyFn: emailIndex})
- 
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = db.PutIndexed(

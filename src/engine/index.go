@@ -9,7 +9,7 @@
 // This layout allows:
 //   - Point lookup: scan all DB keys with prefix \x00idx\x00<name>\x00<idx-key>\x00
 //   - Range query:  scan from \x00idx\x00<name>\x00<from>\x00 to
-//                             \x00idx\x00<name>\x00<to>\x00
+//     \x00idx\x00<name>\x00<to>\x00
 //
 // Index definitions
 // ─────────────────
@@ -20,10 +20,11 @@
 // Maintaining correctness
 // ───────────────────────
 // PutIndexed / DeleteIndexed wrap the normal Put/Delete path:
-//   1. Read the current value (if any) to discover existing index entries.
-//   2. Issue deletes for old index entries.
-//   3. Write the new value.
-//   4. Issue puts for new index entries.
+//  1. Read the current value (if any) to discover existing index entries.
+//  2. Issue deletes for old index entries.
+//  3. Write the new value.
+//  4. Issue puts for new index entries.
+//
 // All four operations are bundled in a single WriteBatch.
 //
 // This is a read-before-write, so indexed writes are slightly heavier than
@@ -325,14 +326,14 @@ func (db *DB) RebuildIndex(name string) error {
 // ── Key encoding helpers ──────────────────────────────────────────────────────
 
 // idxNamePrefix returns the prefix for all entries of a named index.
-// Format: \x00idx\x00<name>\x00
+// Format: \x00idx\x00<name>\x00.
 func idxNamePrefix(name string) []byte {
 	prefix := []byte(idxPrefixMark + name + "\x00")
 	return prefix
 }
 
 // idxEntryPrefix returns the prefix for all entries matching an index key.
-// Format: \x00idx\x00<name>\x00<indexKey>\x00
+// Format: \x00idx\x00<name>\x00<indexKey>\x00.
 func idxEntryPrefix(name string, indexKey []byte) []byte {
 	p := idxNamePrefix(name)
 	result := make([]byte, len(p)+len(indexKey)+1)
@@ -343,7 +344,7 @@ func idxEntryPrefix(name string, indexKey []byte) []byte {
 }
 
 // idxEntry returns the full DB key for one index entry.
-// Format: \x00idx\x00<name>\x00<indexKey>\x00<primaryKey>
+// Format: \x00idx\x00<name>\x00<indexKey>\x00<primaryKey>.
 func idxEntry(name string, indexKey, primaryKey []byte) []byte {
 	prefix := idxEntryPrefix(name, indexKey)
 	result := make([]byte, len(prefix)+len(primaryKey))

@@ -17,7 +17,7 @@
 // On PutWithTTL:
 //   - Write the value under the user key.
 //   - Write the expiry under the TTL meta key.
-//   Both writes share a single WAL batch (one fsync) via the WriteBatch path.
+//     Both writes share a single WAL batch (one fsync) via the WriteBatch path.
 //
 // On Delete:
 //   - The normal Delete path issues a tombstone for the user key.  The TTL meta
@@ -58,7 +58,7 @@ func ttlKey(userKey []byte) []byte {
 // encodeTTL serialises a deadline as big-endian int64 Unix nanoseconds.
 func encodeTTL(deadline time.Time) []byte {
 	buf := make([]byte, ttlValueLen)
-	binary.BigEndian.PutUint64(buf, uint64(deadline.UnixNano())) //nolint:gosec
+	binary.BigEndian.PutUint64(buf, uint64(deadline.UnixNano()))
 	return buf
 }
 
@@ -67,7 +67,7 @@ func decodeTTL(b []byte) time.Time {
 	if len(b) < ttlValueLen {
 		return time.Time{}
 	}
-	ns := int64(binary.BigEndian.Uint64(b)) //nolint:gosec
+	ns := int64(binary.BigEndian.Uint64(b))
 	return time.Unix(0, ns)
 }
 

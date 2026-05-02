@@ -83,7 +83,7 @@ func main() {
 	}
 }
 
-func runDemo() error { //nolint:funlen
+func runDemo() error {
 	dir := "/tmp/hybriddb_v3"
 	os.RemoveAll(dir)
 
@@ -305,9 +305,4 @@ func runReplicationDemo() error {
 	}
 	fmt.Println("\nDone.")
 	return nil
-}
-func must(err error) {
-	if err != nil {
-		panic(err)
-	}
 }

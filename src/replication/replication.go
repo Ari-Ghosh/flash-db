@@ -61,7 +61,7 @@ const (
 	challengeBytes = 32
 )
 
-// Errors
+// Errors.
 var (
 	ErrAuthFailed       = errors.New("replication: authentication failed")
 	ErrProtocolMagic    = errors.New("replication: bad protocol magic")
@@ -249,11 +249,7 @@ func (l *Leader) handleFollower(conn net.Conn) {
 
 		records := l.ring.since(fromSeq)
 		for _, r := range records {
-			frame, err := encodeFrame(r)
-			if err != nil {
-				log.Printf("replication: encode error: %v", err)
-				return
-			}
+			frame := encodeFrame(r)
 			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if _, err := conn.Write(frame); err != nil {
 				return
@@ -419,13 +415,13 @@ func (f *Follower) runOnce() error {
 
 // ── Frame encoding ────────────────────────────────────────────────────────────
 
-func encodeFrame(r WALRecord) ([]byte, error) {
+func encodeFrame(r WALRecord) []byte {
 	payload := marshalRecord(r)
 	frame := make([]byte, 8+len(payload))
 	binary.LittleEndian.PutUint32(frame[0:], crc32.ChecksumIEEE(payload))
 	binary.LittleEndian.PutUint32(frame[4:], uint32(len(payload)))
 	copy(frame[8:], payload)
-	return frame, nil
+	return frame
 }
 
 func decodeFrame(r io.Reader) (WALRecord, error) {

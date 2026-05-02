@@ -89,10 +89,10 @@ func (wb *WriteBatch) Commit() error {
 			kind = wal.KindDelete
 		}
 		batch = append(batch, wal.BatchRecord{
-			Kind:  kind,
+			Kind:   kind,
 			SeqNum: seq,
-			Key:   op.key,
-			Value: op.value,
+			Key:    op.key,
+			Value:  op.value,
 		})
 		opsWithSeq = append(opsWithSeq, opWithSeq{op: op, seq: seq})
 	}

@@ -65,8 +65,9 @@ func (t *BloomTelemetry) RecordFalsePositive(path string) {
 // Stats returns the FilterStats for path, or nil if not tracked.
 func (t *BloomTelemetry) Stats(path string) *FilterStats {
 	if v, ok := t.stats.Load(path); ok {
-		s := v.(*FilterStats)
-		return s
+		if s, ok := v.(*FilterStats); ok {
+			return s
+		}
 	}
 	return nil
 }
@@ -135,10 +136,13 @@ func (t *BloomTelemetry) Recommend(targetFPR, minFPR, maxFPR float64) float64 {
 // getOrCreate returns the *FilterStats for path, creating it if necessary.
 func (t *BloomTelemetry) getOrCreate(path string) *FilterStats {
 	if v, ok := t.stats.Load(path); ok {
-		s := v.(*FilterStats)
-		return s
+		if s, ok := v.(*FilterStats); ok {
+			return s
+		}
 	}
 	v, _ := t.stats.LoadOrStore(path, &FilterStats{})
-	s := v.(*FilterStats)
-	return s
+	if s, ok := v.(*FilterStats); ok {
+		return s
+	}
+	return &FilterStats{} // fallback, though shouldn't happen
 }
