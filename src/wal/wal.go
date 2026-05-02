@@ -27,7 +27,7 @@
 // - **Graceful Corruption**: Truncated records at EOF are silently dropped (torn writes).
 // - **Batch Flusher**: Dedicated goroutine drains pending writes at intervals.
 // - **Backward Compatibility**: Wire format unchanged; v2 can replay v1 logs.
-// 
+//
 // ### v3 (on top of v2 foundations):
 // - Pluggable SyncPolicy (SyncAlways, SyncBatch, SyncNone).
 // - AppendBatch() for atomic multi-record commits (used by transactions).
@@ -62,7 +62,6 @@
 // - Write arrives → WAL.AppendPut() → batch queued → fsync → MemTable.Put()
 // - Crash → WAL.Replay() → restore MemTable → continue normal operation.
 // - Compaction rotates WAL to prevent unbounded growth.
-//
 //
 // # Implements a crash-safe Write-Ahead Log with:
 //
@@ -142,10 +141,10 @@ type batchEntry struct {
 
 // WAL wraps an append-only log file.
 type WAL struct {
-	mu   sync.Mutex
-	f    *os.File
-	bw   *bufio.Writer
-	path string
+	mu     sync.Mutex
+	f      *os.File
+	bw     *bufio.Writer
+	path   string
 	policy SyncPolicy
 
 	batchMu sync.Mutex
@@ -424,15 +423,21 @@ func marshalPayload(kind byte, seq, txnID uint64, key, value []byte) []byte {
 	}
 	buf := make([]byte, size)
 	off := 0
-	buf[off] = kind; off++
-	le.PutUint64(buf[off:], seq); off += 8
-	le.PutUint64(buf[off:], txnID); off += 8
+	buf[off] = kind
+	off++
+	le.PutUint64(buf[off:], seq)
+	off += 8
+	le.PutUint64(buf[off:], txnID)
+	off += 8
 	if len(key) > 0 {
-		le.PutUint32(buf[off:], uint32(len(key))); off += 4
-		copy(buf[off:], key); off += len(key)
+		le.PutUint32(buf[off:], uint32(len(key)))
+		off += 4
+		copy(buf[off:], key)
+		off += len(key)
 	}
 	if kind == KindPut {
-		le.PutUint32(buf[off:], uint32(len(value))); off += 4
+		le.PutUint32(buf[off:], uint32(len(value)))
+		off += 4
 		copy(buf[off:], value)
 	}
 	return buf
@@ -443,9 +448,12 @@ func unmarshalPayload(buf []byte) (Record, error) {
 		return Record{}, fmt.Errorf("wal: payload too short (%d bytes)", len(buf))
 	}
 	off := 0
-	kind := buf[off]; off++
-	seq := le.Uint64(buf[off:]); off += 8
-	txnID := le.Uint64(buf[off:]); off += 8
+	kind := buf[off]
+	off++
+	seq := le.Uint64(buf[off:])
+	off += 8
+	txnID := le.Uint64(buf[off:])
+	off += 8
 
 	rec := Record{Kind: kind, SeqNum: seq, TxnID: txnID, Tombstone: kind == KindDelete}
 
@@ -457,18 +465,21 @@ func unmarshalPayload(buf []byte) (Record, error) {
 	if off+4 > len(buf) {
 		return Record{}, fmt.Errorf("wal: key len overrun")
 	}
-	keyLen := int(le.Uint32(buf[off:])); off += 4
+	keyLen := int(le.Uint32(buf[off:]))
+	off += 4
 	if off+keyLen > len(buf) {
 		return Record{}, fmt.Errorf("wal: key overrun")
 	}
 	rec.Key = make([]byte, keyLen)
-	copy(rec.Key, buf[off:]); off += keyLen
+	copy(rec.Key, buf[off:])
+	off += keyLen
 
 	if kind == KindPut {
 		if off+4 > len(buf) {
 			return Record{}, fmt.Errorf("wal: val len overrun")
 		}
-		valLen := int(le.Uint32(buf[off:])); off += 4
+		valLen := int(le.Uint32(buf[off:]))
+		off += 4
 		if off+valLen > len(buf) {
 			return Record{}, fmt.Errorf("wal: val overrun")
 		}

@@ -1,6 +1,6 @@
 // Package backup implements hot backup and point-in-time restore for HybridDB.
 //
-// Implemented in v3
+// # Implemented in v3
 //
 // Design:
 //   - Backup is non-blocking: it pins a Snapshot to freeze the visible
@@ -33,7 +33,7 @@ import (
 
 // FileEntry describes one file in the backup manifest.
 type FileEntry struct {
-	Name   string `json:"name"`   // base filename
+	Name   string `json:"name"` // base filename
 	Size   int64  `json:"size"`
 	SHA256 string `json:"sha256"` // hex-encoded
 }
