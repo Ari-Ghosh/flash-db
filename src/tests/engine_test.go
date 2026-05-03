@@ -689,7 +689,7 @@ func TestWALCRCCorruption(t *testing.T) {
 	data[len(data)/2] ^= 0xFF
 	// Use Join with Base to satisfy gosec G703 (path traversal) taint analysis.
 	corruptPath := filepath.Join(dir, filepath.Base(path))
-	if err := os.WriteFile(corruptPath, data, 0o644); err != nil {
+	if err := os.WriteFile(corruptPath, data, 0o644); err != nil { //nolint:gosec // G703: path is constructed from t.TempDir(), not user input
 		t.Fatal(err)
 	}
 
@@ -1390,7 +1390,7 @@ func TestBackupManifestChecksums(t *testing.T) {
 		data[len(data)/2] ^= 0xFF
 		// Use Join with Base to satisfy gosec G703 (path traversal) taint analysis.
 		cleanTarget := filepath.Join(backupDir, filepath.Base(targetFile))
-		if err := os.WriteFile(cleanTarget, data, 0o600); err != nil {
+		if err := os.WriteFile(cleanTarget, data, 0o600); err != nil { //nolint:gosec // G703: path is constructed from t.TempDir(), not user input
 			t.Fatal(err)
 		}
 	}
