@@ -140,7 +140,7 @@ func (db *DB) DropColumnFamily(name string) error {
 		keys = append(keys, k)
 		iter.Next()
 	}
-	iter.Close()
+	_ = iter.Close()
 
 	for _, k := range keys {
 		if err := db.Delete(k); err != nil {

@@ -151,7 +151,7 @@ func Restore(srcDir, destDir string) error {
 // ReadManifest reads and parses the manifest from a backup directory.
 func ReadManifest(backupDir string) (*Manifest, error) {
 	path := filepath.Join(backupDir, manifestName)
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return nil, fmt.Errorf("manifest not found in %s: %w", backupDir, err)
 	}
@@ -172,14 +172,14 @@ func copyFile(srcPath, destDir string) (FileEntry, error) {
 		return FileEntry{}, fmt.Errorf("invalid file name: %q", srcPath)
 	}
 
-	src, err := os.Open(srcPath)
+	src, err := os.Open(filepath.Clean(srcPath))
 	if err != nil {
 		return FileEntry{}, err
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 
 	tmpPath := filepath.Join(destDir, base+".tmp")
-	dst, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	dst, err := os.OpenFile(filepath.Clean(tmpPath), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return FileEntry{}, err
 	}
@@ -187,7 +187,7 @@ func copyFile(srcPath, destDir string) (FileEntry, error) {
 	h := sha256.New()
 	mw := io.MultiWriter(dst, h)
 	n, err := io.Copy(mw, src)
-	dst.Close()
+	_ = dst.Close()
 	if err != nil {
 		_ = os.Remove(tmpPath)
 		return FileEntry{}, err
@@ -219,11 +219,11 @@ func writeManifest(destDir string, m *Manifest) error {
 }
 
 func verifyChecksum(path, expectedHex string) error {
-	f, err := os.Open(path)
+	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
 		return err

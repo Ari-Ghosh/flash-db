@@ -172,11 +172,11 @@ func (l *Leader) Ship(r WALRecord) {
 func (l *Leader) Stop() {
 	close(l.stopCh)
 	if l.ln != nil {
-		l.ln.Close()
+		_ = l.ln.Close()
 	}
 	l.mu.Lock()
 	for _, fc := range l.followers {
-		fc.conn.Close()
+		_ = fc.conn.Close()
 	}
 	l.mu.Unlock()
 	l.wg.Wait()
@@ -205,7 +205,7 @@ func (l *Leader) handleFollower(conn net.Conn) {
 	defer l.wg.Done()
 	addr := conn.RemoteAddr().String()
 	defer func() {
-		conn.Close()
+		_ = conn.Close()
 		l.mu.Lock()
 		delete(l.followers, addr)
 		l.mu.Unlock()
@@ -352,7 +352,7 @@ func (f *Follower) runOnce() error {
 	if err != nil {
 		return fmt.Errorf("dial %s: %w", f.cfg.LeaderAddr, err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Auth: read challenge, send HMAC response.
 	challenge := make([]byte, challengeBytes)

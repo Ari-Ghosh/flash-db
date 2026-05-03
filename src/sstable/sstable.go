@@ -71,6 +71,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"local/flashdb/src/bloom"
 	types "local/flashdb/src/types"
@@ -133,7 +134,7 @@ func NewWriterWithCodec(path string, expectedEntries uint, comp types.Compressor
 // NewWriterWithCodecAndFPR opens path for writing using the given compressor
 // and a custom bloom filter false-positive rate.
 func NewWriterWithCodecAndFPR(path string, expectedEntries uint, comp types.Compressor, fpr float64) (*Writer, error) {
-	f, err := os.Create(path)
+	f, err := os.Create(filepath.Clean(path))
 	if err != nil {
 		return nil, fmt.Errorf("sstable writer: %w", err)
 	}
@@ -248,13 +249,13 @@ func OpenReader(path string) (*Reader, error) {
 
 // OpenReaderWithDecompressor opens an SSTable and uses comp for block decompression.
 func OpenReaderWithDecompressor(path string, comp types.Compressor) (*Reader, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
 		return nil, fmt.Errorf("sstable reader: %w", err)
 	}
 	r := &Reader{f: f, comp: comp}
 	if err := r.loadMeta(path); err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, err
 	}
 	return r, nil

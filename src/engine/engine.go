@@ -195,7 +195,7 @@ type DB struct {
 
 // Open opens or creates a flashDB at cfg.Dir.
 func Open(cfg Config) (*DB, error) {
-	if err := os.MkdirAll(cfg.Dir, 0o755); err != nil {
+	if err := os.MkdirAll(cfg.Dir, 0o750); err != nil {
 		return nil, fmt.Errorf("engine open mkdir: %w", err)
 	}
 	if cfg.MemTableSize == 0 {

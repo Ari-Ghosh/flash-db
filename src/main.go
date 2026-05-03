@@ -85,7 +85,7 @@ func main() {
 
 func runDemo() error {
 	dir := "/tmp/hybriddb_v3"
-	os.RemoveAll(dir)
+	_ = os.RemoveAll(dir)
 
 	cfg := engine.DefaultConfig(dir)
 	cfg.MemTableSize = 256 * 1024
@@ -95,7 +95,7 @@ func runDemo() error {
 	if err != nil {
 		return err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := runParallelWrites(db); err != nil {
 		return err
@@ -224,7 +224,7 @@ func runPrefixScanDemo(db *engine.DB) error {
 func runBackupRestoreDemo(db *engine.DB) error {
 	fmt.Println("\n── 4. Backup & restore ───────────────────────────────")
 	backupDir := "/tmp/hybriddb_v3_backup"
-	os.RemoveAll(backupDir)
+	_ = os.RemoveAll(backupDir)
 	manifest, err := db.Backup(backupDir)
 	if err != nil {
 		return err
@@ -239,7 +239,7 @@ func runBackupRestoreDemo(db *engine.DB) error {
 	}
 
 	restoreDir := "/tmp/hybriddb_v3_restored"
-	os.RemoveAll(restoreDir)
+	_ = os.RemoveAll(restoreDir)
 	if err := backup.Restore(backupDir, restoreDir); err != nil {
 		return err
 	}
@@ -248,7 +248,7 @@ func runBackupRestoreDemo(db *engine.DB) error {
 	if err != nil {
 		return err
 	}
-	defer db2.Close()
+	defer func() { _ = db2.Close() }()
 	av, _ := db2.Get([]byte("alice"))
 	fmt.Printf("  restored alice=%s\n", av)
 	_, postErr := db2.Get([]byte("post-backup"))
@@ -260,8 +260,8 @@ func runReplicationDemo() error {
 	fmt.Println("\n── 5. Distributed replication ────────────────────────")
 	leaderDir := "/tmp/hybriddb_leader"
 	followerDir := "/tmp/hybriddb_follower"
-	os.RemoveAll(leaderDir)
-	os.RemoveAll(followerDir)
+	_ = os.RemoveAll(leaderDir)
+	_ = os.RemoveAll(followerDir)
 	secret := []byte("demo-replication-secret-32bytes!!")
 
 	lCfg := engine.DefaultConfig(leaderDir)
@@ -272,7 +272,7 @@ func runReplicationDemo() error {
 	if err != nil {
 		return err
 	}
-	defer leaderDB.Close()
+	defer func() { _ = leaderDB.Close() }()
 	time.Sleep(50 * time.Millisecond)
 
 	fCfg := engine.DefaultConfig(followerDir)
@@ -284,7 +284,7 @@ func runReplicationDemo() error {
 	if err != nil {
 		return err
 	}
-	defer followerDB.Close()
+	defer func() { _ = followerDB.Close() }()
 	time.Sleep(200 * time.Millisecond)
 
 	for i := 0; i < 5; i++ {

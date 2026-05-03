@@ -199,7 +199,7 @@ func (db *DB) reaperSweep() {
 		}
 		iter.Next()
 	}
-	iter.Close()
+	_ = iter.Close()
 
 	for _, pair := range expired {
 		if err := db.deleteWithTTLMeta(pair.k); err != nil {

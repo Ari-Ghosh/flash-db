@@ -103,7 +103,7 @@ func (db *DB) DropIndex(name string) error {
 		keys = append(keys, k)
 		iter.Next()
 	}
-	iter.Close()
+	_ = iter.Close()
 
 	wb := db.NewWriteBatch()
 	for _, k := range keys {
@@ -197,7 +197,7 @@ func (db *DB) QueryByIndex(name string, indexKey []byte) ([][]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	var pkeys [][]byte
 	for iter.Valid() {
@@ -238,7 +238,7 @@ func (db *DB) RangeQueryByIndex(name string, from, to []byte) ([][]byte, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	namePrefix := idxNamePrefix(name)
 	var pkeys [][]byte
@@ -306,7 +306,7 @@ func (db *DB) RebuildIndex(name string) error {
 			n++
 			if n >= batchSize {
 				if err := wb.Commit(); err != nil {
-					iter.Close()
+					_ = iter.Close()
 					return err
 				}
 				wb = db.NewWriteBatch()
@@ -315,7 +315,7 @@ func (db *DB) RebuildIndex(name string) error {
 		}
 		iter.Next()
 	}
-	iter.Close()
+	_ = iter.Close()
 
 	if n > 0 {
 		return wb.Commit()

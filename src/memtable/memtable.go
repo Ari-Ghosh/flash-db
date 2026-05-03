@@ -242,7 +242,7 @@ func (m *MemTable) NewIterator(opts types.IteratorOptions) types.Iterator {
 		e := &allEntries[i]
 		keyStr := string(e.Key)
 		if candidate := keyMap[keyStr]; candidate == e { // This is the latest version of this key
-			if !(e.Tombstone && !opts.IncludeTombstones) {
+			if !e.Tombstone || opts.IncludeTombstones {
 				entries = append(entries, *e)
 			}
 			delete(keyMap, keyStr) // Remove so we don't process again

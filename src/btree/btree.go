@@ -138,7 +138,7 @@ func Open(path string) (*BTree, error) {
 
 // OpenWithCacheSize opens or creates a B-tree file with the given ARC cache capacity.
 func OpenWithCacheSize(path string, cachePages int) (*BTree, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("btree open: %w", err)
 	}
@@ -285,7 +285,7 @@ func (bt *BTree) NewIterator(opts types.IteratorOptions) (types.Iterator, error)
 		e := &allEntries[i]
 		keyStr := string(e.Key)
 		if candidate := keyMap[keyStr]; candidate == e {
-			if !(e.Tombstone && !opts.IncludeTombstones) {
+			if !e.Tombstone || opts.IncludeTombstones {
 				entries = append(entries, *e)
 			}
 			delete(keyMap, keyStr)

@@ -95,6 +95,7 @@ import (
 	"hash/crc32"
 	"io"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -169,7 +170,7 @@ func Open(path string) (*WAL, error) {
 
 // OpenWithOptions opens or creates the WAL with explicit options.
 func OpenWithOptions(path string, opts Options) (*WAL, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(filepath.Clean(path), os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("wal open %s: %w", path, err)
 	}
@@ -273,7 +274,7 @@ func makeHeader(payload []byte) []byte {
 	return h
 }
 
-func (w *WAL) writeRaw(data []byte, sync bool) error {
+func (w *WAL) writeRaw(data []byte, doSync bool) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if _, err := w.bw.Write(data); err != nil {
@@ -282,7 +283,7 @@ func (w *WAL) writeRaw(data []byte, sync bool) error {
 	if err := w.bw.Flush(); err != nil {
 		return err
 	}
-	if sync {
+	if doSync {
 		return w.f.Sync()
 	}
 	return nil
@@ -525,6 +526,6 @@ func (w *WAL) Close() error {
 func (w *WAL) Delete() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	w.f.Close()
+	_ = w.f.Close()
 	return os.Remove(w.path)
 }

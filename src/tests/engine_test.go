@@ -85,7 +85,7 @@ func tmpDir(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	return dir
 }
 
@@ -133,7 +133,7 @@ func freePort(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	_, port, err := net.SplitHostPort(l.Addr().String())
 	if err != nil {
 		t.Fatal(err)
@@ -145,7 +145,7 @@ func freePort(t *testing.T) string {
 
 func TestBasicPutGet(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mustPut(t, db, "hello", "world")
 	mustGet(t, db, "hello", "world")
@@ -153,7 +153,7 @@ func TestBasicPutGet(t *testing.T) {
 
 func TestOverwrite(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mustPut(t, db, "key", "v1")
 	mustPut(t, db, "key", "v2")
@@ -162,7 +162,7 @@ func TestOverwrite(t *testing.T) {
 
 func TestDelete(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mustPut(t, db, "key", "val")
 	if err := db.Delete([]byte("key")); err != nil {
@@ -173,7 +173,7 @@ func TestDelete(t *testing.T) {
 
 func TestDeleteNonExistent(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Should succeed (tombstone is idempotent).
 	if err := db.Delete([]byte("nope")); err != nil {
@@ -190,10 +190,10 @@ func TestWALRecovery(t *testing.T) {
 	mustPut(t, db, "persist", "yes")
 	mustPut(t, db, "also", "survives")
 	// Simulate crash by closing without compaction.
-	db.Close()
+	_ = db.Close()
 
 	db2 := openDB(t, dir)
-	defer db2.Close()
+	defer func() { _ = db2.Close() }()
 
 	mustGet(t, db2, "persist", "yes")
 	mustGet(t, db2, "also", "survives")
@@ -205,10 +205,10 @@ func TestWALRecoveryAfterDelete(t *testing.T) {
 
 	mustPut(t, db, "del", "me")
 	_ = db.Delete([]byte("del"))
-	db.Close()
+	_ = db.Close()
 
 	db2 := openDB(t, dir)
-	defer db2.Close()
+	defer func() { _ = db2.Close() }()
 	mustNotFound(t, db2, "del")
 }
 
@@ -217,7 +217,7 @@ func TestWALRecoveryAfterDelete(t *testing.T) {
 func TestFlushAndCompaction(t *testing.T) {
 	dir := tmpDir(t)
 	db := openDB(t, dir)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Write enough to trigger multiple flushes and a compaction.
 	for i := 0; i < 3000; i++ {
@@ -237,7 +237,7 @@ func TestFlushAndCompaction(t *testing.T) {
 func TestCompactionPreservesLatestVersion(t *testing.T) {
 	dir := tmpDir(t)
 	db := openDB(t, dir)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Write key multiple times, then flush to L0.
 	for v := 0; v < 10; v++ {
@@ -254,11 +254,11 @@ func TestCompactionPreservesLatestVersion(t *testing.T) {
 
 func TestSnapshotIsolation(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mustPut(t, db, "x", "before")
 	snap := db.NewSnapshot()
-	defer snap.Release()
+	defer func() { snap.Release() }()
 
 	mustPut(t, db, "x", "after")
 
@@ -277,11 +277,11 @@ func TestSnapshotIsolation(t *testing.T) {
 
 func TestSnapshotNotAffectedByDelete(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mustPut(t, db, "gone", "here")
 	snap := db.NewSnapshot()
-	defer snap.Release()
+	defer func() { snap.Release() }()
 
 	_ = db.Delete([]byte("gone"))
 
@@ -300,7 +300,7 @@ func TestSnapshotNotAffectedByDelete(t *testing.T) {
 
 func TestMultipleSnapshotsIndependent(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mustPut(t, db, "v", "0")
 	s0 := db.NewSnapshot()
@@ -329,7 +329,7 @@ func TestMultipleSnapshotsIndependent(t *testing.T) {
 
 func TestIteratorForward(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	keys := []string{"aaa", "bbb", "ccc", "ddd", "eee"}
 	for _, k := range keys {
@@ -340,7 +340,7 @@ func TestIteratorForward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	var got []string
 	for iter.Valid() {
@@ -366,7 +366,7 @@ func TestIteratorForward(t *testing.T) {
 
 func TestIteratorBounds(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	for _, k := range []string{"a", "b", "c", "d", "e"} {
 		mustPut(t, db, k, k)
@@ -379,7 +379,7 @@ func TestIteratorBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	var got []string
 	for iter.Valid() {
@@ -394,7 +394,7 @@ func TestIteratorBounds(t *testing.T) {
 
 func TestIteratorReverse(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	for _, k := range []string{"a", "b", "c", "d"} {
 		mustPut(t, db, k, k)
@@ -404,7 +404,7 @@ func TestIteratorReverse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	var got []string
 	for iter.Valid() {
@@ -420,7 +420,7 @@ func TestIteratorReverse(t *testing.T) {
 
 func TestIteratorSkipsTombstones(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mustPut(t, db, "a", "1")
 	mustPut(t, db, "b", "2")
@@ -431,7 +431,7 @@ func TestIteratorSkipsTombstones(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	var got []string
 	for iter.Valid() {
@@ -447,18 +447,18 @@ func TestIteratorSkipsTombstones(t *testing.T) {
 
 func TestIteratorSnapshotBound(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mustPut(t, db, "early", "e")
 	snap := db.NewSnapshot()
-	defer snap.Release()
+	defer func() { snap.Release() }()
 	mustPut(t, db, "late", "l")
 
 	iter, err := db.NewIterator(types.IteratorOptions{SnapshotSeq: snap.Seq()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	for iter.Valid() {
 		if string(iter.Key()) == "late" {
@@ -472,7 +472,7 @@ func TestIteratorSnapshotBound(t *testing.T) {
 
 func TestConcurrentPuts(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	const goroutines = 20
 	const perGoroutine = 100
@@ -507,7 +507,7 @@ func TestConcurrentPuts(t *testing.T) {
 
 func TestConcurrentPutGet(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	const n = 50
 	var wg sync.WaitGroup
@@ -553,11 +553,11 @@ func TestTombstoneGCAfterCompaction(t *testing.T) {
 	time.Sleep(400 * time.Millisecond)
 
 	mustNotFound(t, db, "tgc")
-	db.Close()
+	_ = db.Close()
 
 	// Reopen: key should still be absent.
 	db2 := openDB(t, dir)
-	defer db2.Close()
+	defer func() { _ = db2.Close() }()
 	mustNotFound(t, db2, "tgc")
 }
 
@@ -572,7 +572,7 @@ func TestWALBatchThroughput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	const n = 500
 	start := time.Now()
@@ -601,7 +601,7 @@ func TestSSTIterator(t *testing.T) {
 	dir := tmpDir(t)
 	path := filepath.Join(dir, "test.sst")
 
-	w, err := sstable.NewWriter(path, 10)
+	w, err := sstable.NewWriter(filepath.Clean(path), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -616,13 +616,13 @@ func TestSSTIterator(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	w.Close()
+	_ = w.Close()
 
-	r, err := sstable.OpenReader(path)
+	r, err := sstable.OpenReader(filepath.Clean(path))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	iter, err := r.NewIterator(types.IteratorOptions{
 		LowerBound: []byte("b"),
@@ -631,7 +631,7 @@ func TestSSTIterator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	var got []string
 	for iter.Valid() {
@@ -650,18 +650,18 @@ func TestWALRoundtrip(t *testing.T) {
 	dir := tmpDir(t)
 	path := filepath.Join(dir, "wal.log")
 
-	w, err := wal.Open(path)
+	w, err := wal.Open(filepath.Clean(path))
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = w.AppendPut(1, []byte("key1"), []byte("val1"))
 	_ = w.AppendPut(2, []byte("key2"), []byte("val2"))
 	_ = w.AppendDelete(3, []byte("key1"))
-	w.Close()
+	_ = w.Close()
 
-	w2, _ := wal.Open(path)
+	w2, _ := wal.Open(filepath.Clean(path))
 	recs, err := w2.Replay()
-	w2.Close()
+	_ = w2.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -680,18 +680,18 @@ func TestWALCRCCorruption(t *testing.T) {
 	dir := tmpDir(t)
 	path := filepath.Join(dir, "wal.log")
 
-	w, _ := wal.Open(path)
+	w, _ := wal.Open(filepath.Clean(path))
 	_ = w.AppendPut(1, []byte("k"), []byte("v"))
-	w.Close()
+	_ = w.Close()
 
 	// Corrupt a byte in the middle.
-	data, _ := os.ReadFile(path)
+	data, _ := os.ReadFile(filepath.Clean(path))
 	data[len(data)/2] ^= 0xFF
-	_ = os.WriteFile(path, data, 0o644)
+	_ = os.WriteFile(filepath.Clean(path), data, 0o644)
 
-	w2, _ := wal.Open(path)
+	w2, _ := wal.Open(filepath.Clean(path))
 	recs, err := w2.Replay()
-	w2.Close()
+	_ = w2.Close()
 	// Should get 0 or 1 records (corruption stops replay).
 	if err != nil {
 		t.Fatal("unexpected error:", err)
@@ -763,11 +763,11 @@ func TestBloomFilter(t *testing.T) {
 
 func TestBTreeBulkLoad(t *testing.T) {
 	dir := tmpDir(t)
-	bt, err := btree.Open(filepath.Join(dir, "test.bt"))
+	bt, err := btree.Open(filepath.Clean(filepath.Join(dir, "test.bt")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer bt.Close()
+	defer func() { _ = bt.Close() }()
 
 	var entries []types.Entry
 	for i := 0; i < 200; i++ {
@@ -795,8 +795,8 @@ func TestBTreeBulkLoad(t *testing.T) {
 
 func TestBTreeAllEntries(t *testing.T) {
 	dir := tmpDir(t)
-	bt, _ := btree.Open(filepath.Join(dir, "test.bt"))
-	defer bt.Close()
+	bt, _ := btree.Open(filepath.Clean(filepath.Join(dir, "test.bt")))
+	defer func() { _ = bt.Close() }()
 
 	var entries []types.Entry
 	for i := 0; i < 50; i++ {
@@ -818,8 +818,8 @@ func TestBTreeAllEntries(t *testing.T) {
 
 func TestBTreeIterator(t *testing.T) {
 	dir := tmpDir(t)
-	bt, _ := btree.Open(filepath.Join(dir, "test.bt"))
-	defer bt.Close()
+	bt, _ := btree.Open(filepath.Clean(filepath.Join(dir, "test.bt")))
+	defer func() { _ = bt.Close() }()
 
 	var entries []types.Entry
 	for i := 0; i < 10; i++ {
@@ -837,7 +837,7 @@ func TestBTreeIterator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	var got []string
 	for iter.Valid() {
@@ -857,20 +857,20 @@ func TestCompactionMergeTwo(t *testing.T) {
 	path1 := filepath.Join(dir, "l0_1.sst")
 	path2 := filepath.Join(dir, "l0_2.sst")
 
-	w1, _ := sstable.NewWriter(path1, 5)
+	w1, _ := sstable.NewWriter(filepath.Clean(path1), 5)
 	_ = w1.Add(types.Entry{Key: []byte("a"), Value: []byte("old"), SeqNum: 1})
 	_ = w1.Add(types.Entry{Key: []byte("b"), Value: []byte("b1"), SeqNum: 1})
-	w1.Close()
+	_ = w1.Close()
 
-	w2, _ := sstable.NewWriter(path2, 5)
+	w2, _ := sstable.NewWriter(filepath.Clean(path2), 5)
 	_ = w2.Add(types.Entry{Key: []byte("a"), Value: []byte("new"), SeqNum: 5})
 	_ = w2.Add(types.Entry{Key: []byte("c"), Value: []byte("c1"), SeqNum: 5})
-	w2.Close()
+	_ = w2.Close()
 
-	l1Tree, _ := btree.Open(filepath.Join(dir, "l1.bt"))
-	l2Tree, _ := btree.Open(filepath.Join(dir, "l2.bt"))
-	defer l1Tree.Close()
-	defer l2Tree.Close()
+	l1Tree, _ := btree.Open(filepath.Clean(filepath.Join(dir, "l1.bt")))
+	l2Tree, _ := btree.Open(filepath.Clean(filepath.Join(dir, "l2.bt")))
+	defer func() { _ = l1Tree.Close() }()
+	defer func() { _ = l2Tree.Close() }()
 
 	tracker := types.NewSnapshotTracker()
 	eng := compaction.New(compaction.Config{
@@ -937,7 +937,7 @@ func TestWALGroupCommitCorrectness(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	const goroutines, perG = 50, 200
 	var wg sync.WaitGroup
@@ -978,7 +978,7 @@ func TestWALGroupCommitSurvivesCrash(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		mustPut(t, db, fmt.Sprintf("crash:%05d", i), "v")
 	}
-	db.Close()
+	_ = db.Close()
 
 	db2 := openDB(t, dir)
 	for i := 0; i < 500; i++ {
@@ -992,7 +992,7 @@ func BenchmarkWALGroupCommit(b *testing.B) {
 	cfg := engine.DefaultConfig(dir)
 	cfg.WALSyncPolicy = wal.SyncBatch
 	db, _ := engine.Open(cfg)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
@@ -1149,7 +1149,7 @@ func TestTxnWALReplay(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	db.Close()
+	_ = db.Close()
 
 	// Reopen — both keys must survive WAL replay.
 	db2 := openDB(t, dir)
@@ -1195,7 +1195,7 @@ func TestPrefixScanBasic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	var got []string
 	for iter.Valid() {
@@ -1221,7 +1221,7 @@ func TestPrefixScanReverse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	var got []string
 	for iter.Valid() {
@@ -1251,7 +1251,7 @@ func TestPrefixScanAllFFBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	var got []string
 	for iter.Valid() {
@@ -1274,7 +1274,7 @@ func TestPrefixScanEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	if iter.Valid() {
 		t.Fatalf("expected empty result, got key %s", iter.Key())
@@ -1292,7 +1292,7 @@ func TestPrefixScanSkipsTombstones(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	var got []string
 	for iter.Valid() {
@@ -1318,7 +1318,7 @@ func TestPrefixScanPostCompaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	count := 0
 	for iter.Valid() {
@@ -1336,7 +1336,7 @@ func TestBackupAndRestore(t *testing.T) {
 	srcDir := tmpDir(t)
 	backupDir := tmpDir(t)
 	restoreDir := tmpDir(t)
-	os.RemoveAll(restoreDir) // Restore requires empty / non-existent dest
+	_ = os.RemoveAll(restoreDir) // Restore requires empty / non-existent dest
 
 	db := openDB(t, srcDir)
 	for i := 0; i < 100; i++ {
@@ -1353,7 +1353,7 @@ func TestBackupAndRestore(t *testing.T) {
 	if manifest.Version != 1 {
 		t.Fatalf("unexpected manifest version: %d", manifest.Version)
 	}
-	db.Close()
+	_ = db.Close()
 
 	// Restore into a fresh directory.
 	if err := backup.Restore(backupDir, restoreDir); err != nil {
@@ -1377,18 +1377,18 @@ func TestBackupManifestChecksums(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.Close()
+	_ = db.Close()
 
 	// Corrupt one file in the backup.
 	targetFile := filepath.Join(backupDir, manifest.Files[0].Name)
-	data, _ := os.ReadFile(targetFile)
+	data, _ := os.ReadFile(filepath.Clean(targetFile))
 	if len(data) > 0 {
 		data[len(data)/2] ^= 0xFF
-		_ = os.WriteFile(targetFile, data, 0o600)
+		_ = os.WriteFile(filepath.Clean(targetFile), data, 0o600)
 	}
 
 	restoreDir := tmpDir(t)
-	os.RemoveAll(restoreDir)
+	_ = os.RemoveAll(restoreDir)
 	err = backup.Restore(backupDir, restoreDir)
 	if err == nil {
 		t.Fatal("Restore should have failed with corrupted backup")
@@ -1403,10 +1403,10 @@ func TestBackupRejectsNonEmptyDest(t *testing.T) {
 	db := openDB(t, srcDir)
 	mustPut(t, db, "k", "v")
 	_, _ = db.Backup(backupDir)
-	db.Close()
+	_ = db.Close()
 
 	// Create a file in restoreDir so it's non-empty.
-	_ = os.WriteFile(filepath.Join(restoreDir, "existing.txt"), []byte("data"), 0o600)
+	_ = os.WriteFile(filepath.Clean(filepath.Join(restoreDir, "existing.txt")), []byte("data"), 0o600)
 	err := backup.Restore(backupDir, restoreDir)
 	if err == nil {
 		t.Fatal("Restore should reject non-empty destination")
@@ -1420,7 +1420,7 @@ func TestBackupManifestReadable(t *testing.T) {
 	db := openDB(t, srcDir)
 	mustPut(t, db, "manifest-test", "ok")
 	_, _ = db.Backup(backupDir)
-	db.Close()
+	_ = db.Close()
 
 	m, err := backup.ReadManifest(backupDir)
 	if err != nil {
@@ -1572,7 +1572,7 @@ func TestMVCCSnapshotRegression(t *testing.T) {
 	db := openDB(t, tmpDir(t))
 	mustPut(t, db, "x", "before")
 	snap := db.NewSnapshot()
-	defer snap.Release()
+	defer func() { snap.Release() }()
 	mustPut(t, db, "x", "after")
 
 	old, err := db.GetSnapshot(snap, []byte("x"))
@@ -1594,7 +1594,7 @@ func TestIteratorRegression(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 	var got []string
 	for iter.Valid() {
 		got = append(got, string(iter.Key()))
@@ -1609,7 +1609,7 @@ func TestWALRecoveryRegression(t *testing.T) {
 	dir := tmpDir(t)
 	db := openDB(t, dir)
 	mustPut(t, db, "persist", "yes")
-	db.Close()
+	_ = db.Close()
 	db2 := openDB(t, dir)
 	mustGet(t, db2, "persist", "yes")
 }
@@ -1749,7 +1749,7 @@ func TestBloomAdaptiveIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Write enough data to trigger a flush (creates L0 SSTable with default FPR).
 	for i := 0; i < 2000; i++ {
@@ -1804,7 +1804,7 @@ func TestBloomTelemetryCleanup(t *testing.T) {
 
 func TestBloomStatsExposed(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Before any activity, stats should be zeroed but valid.
 	stats := db.BloomStats()
@@ -1821,29 +1821,29 @@ func TestSSTWriterWithFPR(t *testing.T) {
 
 	// Write SSTable with very low FPR (large bloom filter).
 	path1 := filepath.Join(dir, "low_fpr.sst")
-	w1, err := sstable.NewWriterWithFPR(path1, 1000, 0.001)
+	w1, err := sstable.NewWriterWithFPR(filepath.Clean(path1), 1000, 0.001)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 100; i++ {
 		_ = w1.Add(types.Entry{Key: []byte(fmt.Sprintf("k%04d", i)), Value: []byte("v"), SeqNum: uint64(i + 1)})
 	}
-	w1.Close()
+	_ = w1.Close()
 
 	// Write SSTable with higher FPR (smaller bloom filter).
 	path2 := filepath.Join(dir, "high_fpr.sst")
-	w2, err := sstable.NewWriterWithFPR(path2, 1000, 0.05)
+	w2, err := sstable.NewWriterWithFPR(filepath.Clean(path2), 1000, 0.05)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 100; i++ {
 		_ = w2.Add(types.Entry{Key: []byte(fmt.Sprintf("k%04d", i)), Value: []byte("v"), SeqNum: uint64(i + 1)})
 	}
-	w2.Close()
+	_ = w2.Close()
 
 	// Both should be readable.
-	r1, _ := sstable.OpenReader(path1)
-	r2, _ := sstable.OpenReader(path2)
+	r1, _ := sstable.OpenReader(filepath.Clean(path1))
+	r2, _ := sstable.OpenReader(filepath.Clean(path2))
 	defer r1.Close()
 	defer r2.Close()
 
@@ -1879,7 +1879,7 @@ func BenchmarkPut(b *testing.B) {
 	cfg := engine.DefaultConfig(dir)
 	cfg.WALSyncPolicy = wal.SyncBatch
 	db, _ := engine.Open(cfg)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -1892,7 +1892,7 @@ func BenchmarkGet(b *testing.B) {
 	defer os.RemoveAll(dir)
 
 	db, _ := engine.Open(engine.DefaultConfig(dir))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	for i := 0; i < 10000; i++ {
 		_ = db.Put([]byte(fmt.Sprintf("k%d", i)), []byte("v"))
@@ -1909,7 +1909,7 @@ func BenchmarkIterator(b *testing.B) {
 	defer os.RemoveAll(dir)
 
 	db, _ := engine.Open(engine.DefaultConfig(dir))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	for i := 0; i < 1000; i++ {
 		_ = db.Put([]byte(fmt.Sprintf("k%05d", i)), []byte("v"))
@@ -1931,7 +1931,7 @@ func BenchmarkIterator(b *testing.B) {
 
 func TestWriteBatchAtomic(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	wb := db.NewWriteBatch()
 	wb.Put([]byte("wb:a"), []byte("1"))
@@ -1948,7 +1948,7 @@ func TestWriteBatchAtomic(t *testing.T) {
 
 func TestWriteBatchDeleteInBatch(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mustPut(t, db, "del:x", "exists")
 
@@ -1965,7 +1965,7 @@ func TestWriteBatchDeleteInBatch(t *testing.T) {
 
 func TestWriteBatchConcurrent(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	const goroutines = 30
 	const perG = 50
@@ -2002,7 +2002,7 @@ func TestWriteBatchConcurrent(t *testing.T) {
 
 func TestWriteBatchEmptyIsNoop(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	wb := db.NewWriteBatch()
 	if err := wb.Commit(); err != nil {
@@ -2020,10 +2020,10 @@ func TestWriteBatchSurvivesRestart(t *testing.T) {
 	if err := wb.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	db.Close()
+	_ = db.Close()
 
 	db2 := openDB(t, dir)
-	defer db2.Close()
+	defer func() { _ = db2.Close() }()
 	mustGet(t, db2, "restart:a", "1")
 	mustGet(t, db2, "restart:b", "2")
 }
@@ -2034,7 +2034,7 @@ func TestWriteBatchSurvivesRestart(t *testing.T) {
 
 func TestColumnFamilyBasic(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.CreateColumnFamily("users"); err != nil {
 		t.Fatal(err)
@@ -2058,7 +2058,7 @@ func TestColumnFamilyBasic(t *testing.T) {
 
 func TestColumnFamilyIsolation(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Same key in two different column families must be independent.
 	if err := db.CreateColumnFamily("cf1"); err != nil {
@@ -2092,7 +2092,7 @@ func TestColumnFamilyIsolation(t *testing.T) {
 
 func TestColumnFamilyNotFoundBeforeCreate(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	_, err := db.GetColumnFamily("nonexistent")
 	if err == nil {
@@ -2102,7 +2102,7 @@ func TestColumnFamilyNotFoundBeforeCreate(t *testing.T) {
 
 func TestColumnFamilyDelete(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.CreateColumnFamily("orders"); err != nil {
 		t.Fatal(err)
@@ -2119,7 +2119,7 @@ func TestColumnFamilyDelete(t *testing.T) {
 
 func TestColumnFamilyIterator(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.CreateColumnFamily("metrics"); err != nil {
 		t.Fatal(err)
@@ -2139,7 +2139,7 @@ func TestColumnFamilyIterator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	var got []string
 	for iter.Valid() {
@@ -2167,10 +2167,10 @@ func TestColumnFamilyPersists(t *testing.T) {
 	}
 	cf, _ := db.GetColumnFamily("persistent")
 	_ = cf.Put([]byte("k"), []byte("v"))
-	db.Close()
+	_ = db.Close()
 
 	db2 := openDB(t, dir)
-	defer db2.Close()
+	defer func() { _ = db2.Close() }()
 
 	// CF must still exist after restart.
 	cf2, err := db2.GetColumnFamily("persistent")
@@ -2188,7 +2188,7 @@ func TestColumnFamilyPersists(t *testing.T) {
 
 func TestColumnFamilyListAndDrop(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	_ = db.CreateColumnFamily("alpha")
 	_ = db.CreateColumnFamily("beta")
@@ -2221,7 +2221,7 @@ func TestColumnFamilyListAndDrop(t *testing.T) {
 
 func TestColumnFamilyIdempotentCreate(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	_ = db.CreateColumnFamily("idm")
 	cf1, _ := db.GetColumnFamily("idm")
@@ -2244,7 +2244,7 @@ func TestColumnFamilyIdempotentCreate(t *testing.T) {
 
 func TestTTLExpiry(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.PutWithTTL([]byte("expires"), []byte("soon"), 50*time.Millisecond); err != nil {
 		t.Fatal(err)
@@ -2260,7 +2260,7 @@ func TestTTLExpiry(t *testing.T) {
 
 func TestTTLNotExpiredYet(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.PutWithTTL([]byte("long"), []byte("lived"), 10*time.Second); err != nil {
 		t.Fatal(err)
@@ -2270,7 +2270,7 @@ func TestTTLNotExpiredYet(t *testing.T) {
 
 func TestTTLOf(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.PutWithTTL([]byte("ttlcheck"), []byte("v"), time.Second); err != nil {
 		t.Fatal(err)
@@ -2286,7 +2286,7 @@ func TestTTLOf(t *testing.T) {
 
 func TestTTLOfNoTTL(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mustPut(t, db, "notttl", "v")
 	_, err := db.TTLOf([]byte("notttl"))
@@ -2297,7 +2297,7 @@ func TestTTLOfNoTTL(t *testing.T) {
 
 func TestExpireAt(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mustPut(t, db, "expireat", "v")
 
@@ -2313,7 +2313,7 @@ func TestExpireAt(t *testing.T) {
 
 func TestTTLColumnFamilyKey(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	_ = db.CreateColumnFamily("ttlcf")
 	cf, _ := db.GetColumnFamily("ttlcf")
@@ -2334,7 +2334,7 @@ func TestTTLColumnFamilyKey(t *testing.T) {
 
 func TestTTLDoesNotAffectOtherKeys(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mustPut(t, db, "permanent", "stays")
 	if err := db.PutWithTTL([]byte("temp"), []byte("goes"), 30*time.Millisecond); err != nil {
@@ -2349,7 +2349,7 @@ func TestTTLDoesNotAffectOtherKeys(t *testing.T) {
 
 func TestTTLOverwrite(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Write with short TTL, then overwrite with a long TTL.
 	if err := db.PutWithTTL([]byte("overwrite"), []byte("v1"), 30*time.Millisecond); err != nil {
@@ -2448,11 +2448,11 @@ func TestARCAdaptation(t *testing.T) {
 func TestARCBTreeIntegration(t *testing.T) {
 	// Verify the B-tree uses the ARC cache for page lookups.
 	dir := tmpDir(t)
-	bt, err := btree.OpenWithCacheSize(dir+"/arc_test.bt", 8)
+	bt, err := btree.OpenWithCacheSize(filepath.Clean(dir+"/arc_test.bt"), 8)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer bt.Close()
+	defer func() { _ = bt.Close() }()
 
 	var entries []types.Entry
 	for i := 0; i < 200; i++ {
@@ -2534,7 +2534,7 @@ func prefixIndex(_, value []byte) [][]byte {
 
 func TestIndexDefineAndQuery(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.DefineIndex(engine.IndexDefinition{Name: "by_email", KeyFn: emailIndex}); err != nil {
 		t.Fatal(err)
@@ -2576,7 +2576,7 @@ func TestIndexDefineAndQuery(t *testing.T) {
 
 func TestIndexUpdateRemovesOldEntry(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.DefineIndex(engine.IndexDefinition{Name: "by_val", KeyFn: emailIndex}); err != nil {
 		t.Fatal(err)
@@ -2605,7 +2605,7 @@ func TestIndexUpdateRemovesOldEntry(t *testing.T) {
 
 func TestIndexDeleteRemovesEntry(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.DefineIndex(engine.IndexDefinition{Name: "by_v", KeyFn: emailIndex}); err != nil {
 		t.Fatal(err)
@@ -2623,7 +2623,7 @@ func TestIndexDeleteRemovesEntry(t *testing.T) {
 
 func TestIndexRangeQuery(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Index value = first 3 bytes of value (e.g. "aaa", "bbb", "ccc").
 	if err := db.DefineIndex(engine.IndexDefinition{Name: "by_prefix", KeyFn: prefixIndex}); err != nil {
@@ -2651,7 +2651,7 @@ func TestIndexRangeQuery(t *testing.T) {
 
 func TestIndexRebuild(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Write data BEFORE defining the index.
 	mustPut(t, db, "r:1", "alpha")
@@ -2677,7 +2677,7 @@ func TestIndexRebuild(t *testing.T) {
 
 func TestIndexDropRemovesAllEntries(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.DefineIndex(engine.IndexDefinition{Name: "todrop", KeyFn: emailIndex}); err != nil {
 		t.Fatal(err)
@@ -2699,7 +2699,7 @@ func TestIndexDropRemovesAllEntries(t *testing.T) {
 
 func TestIndexMultipleIndexes(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Two indexes on different aspects of the same value.
 	// Value format: "<email>:<role>"
@@ -2743,7 +2743,7 @@ func TestIndexMultipleIndexes(t *testing.T) {
 
 func TestCFWithTTL(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	_ = db.CreateColumnFamily("sessions")
 	cf, _ := db.GetColumnFamily("sessions")
@@ -2762,7 +2762,7 @@ func TestCFWithTTL(t *testing.T) {
 
 func TestIndexWithWriteBatch(t *testing.T) {
 	db := openDB(t, tmpDir(t))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	_ = db.DefineIndex(engine.IndexDefinition{Name: "batch_idx", KeyFn: emailIndex})
 
@@ -2791,9 +2791,9 @@ func TestAllFeaturesWithRestart(t *testing.T) {
 	wb.Put([]byte("wb:restart"), []byte("ok"))
 	_ = wb.Commit()
 
-	db.Close()
+	_ = db.Close()
 	db2 := openDB(t, dir)
-	defer db2.Close()
+	defer func() { _ = db2.Close() }()
 
 	// CF must survive.
 	cf2, err := db2.GetColumnFamily("persist_cf")
@@ -2817,7 +2817,7 @@ func BenchmarkWriteBatch10(b *testing.B) {
 	dir, _ := os.MkdirTemp("", "bench_wb_*")
 	defer os.RemoveAll(dir)
 	db, _ := engine.Open(engine.DefaultConfig(dir))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -2844,7 +2844,7 @@ func BenchmarkIndexedPut(b *testing.B) {
 	dir, _ := os.MkdirTemp("", "bench_idx_*")
 	defer os.RemoveAll(dir)
 	db, _ := engine.Open(engine.DefaultConfig(dir))
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	_ = db.DefineIndex(engine.IndexDefinition{Name: "bench", KeyFn: emailIndex})
 
 	b.ResetTimer()

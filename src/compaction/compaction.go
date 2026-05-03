@@ -194,7 +194,7 @@ func (e *Engine) compactL0(paths []string) error {
 	}
 	defer func() {
 		for _, r := range readers {
-			r.Close()
+			_ = r.Close()
 		}
 	}()
 
