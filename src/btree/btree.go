@@ -80,6 +80,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"local/flashdb/src/arc"
@@ -138,7 +139,7 @@ func Open(path string) (*BTree, error) {
 
 // OpenWithCacheSize opens or creates a B-tree file with the given ARC cache capacity.
 func OpenWithCacheSize(path string, cachePages int) (*BTree, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := os.OpenFile(filepath.Clean(path), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("btree open: %w", err)
 	}

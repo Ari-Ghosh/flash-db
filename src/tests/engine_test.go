@@ -687,7 +687,9 @@ func TestWALCRCCorruption(t *testing.T) {
 	// Corrupt a byte in the middle.
 	data, _ := os.ReadFile(filepath.Clean(path))
 	data[len(data)/2] ^= 0xFF
-	_ = os.WriteFile(filepath.Clean(path), data, 0o644)
+	if err := os.WriteFile(filepath.Clean(path), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	w2, _ := wal.Open(filepath.Clean(path))
 	recs, err := w2.Replay()
@@ -1384,7 +1386,9 @@ func TestBackupManifestChecksums(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Clean(targetFile))
 	if len(data) > 0 {
 		data[len(data)/2] ^= 0xFF
-		_ = os.WriteFile(filepath.Clean(targetFile), data, 0o600)
+		if err := os.WriteFile(filepath.Clean(targetFile), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	restoreDir := tmpDir(t)
@@ -1406,7 +1410,9 @@ func TestBackupRejectsNonEmptyDest(t *testing.T) {
 	_ = db.Close()
 
 	// Create a file in restoreDir so it's non-empty.
-	_ = os.WriteFile(filepath.Clean(filepath.Join(restoreDir, "existing.txt")), []byte("data"), 0o600)
+	if err := os.WriteFile(filepath.Clean(filepath.Join(restoreDir, "existing.txt")), []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	err := backup.Restore(backupDir, restoreDir)
 	if err == nil {
 		t.Fatal("Restore should reject non-empty destination")

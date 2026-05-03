@@ -212,7 +212,7 @@ func writeManifest(destDir string, m *Manifest) error {
 		return err
 	}
 	tmpPath := filepath.Join(destDir, manifestName+".tmp")
-	if err := os.WriteFile(tmpPath, data, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Clean(tmpPath), data, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmpPath, filepath.Join(destDir, manifestName))
