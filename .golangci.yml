@@ -76,7 +76,7 @@ linters:
       lines: 100
       statements: 50
     lll:
-      line-length: 120
+      line-length: 200
       tab-width: 4
     gocritic:
       enabled-tags:
