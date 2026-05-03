@@ -120,6 +120,16 @@ Leader Node                         Follower Node
 | **Crash Recovery** | WAL replay restores in-memory state on startup |
 | **Adaptive Bloom Filters** | Per-SSTable FPR telemetry drives automatic filter sizing |
 
+## Documentation
+
+FlashDB comes with comprehensive documentation covering architecture, component details, and user guides.
+
+- [**Full Documentation Index**](docs/DOCUMENTATION.md)
+- [**Architecture Overview**](docs/architecture/OVERVIEW.md)
+- [**Getting Started Guide**](docs/user-guide/GETTING_STARTED.md)
+- [**API Reference**](docs/user-guide/API_REFERENCE.md)
+- [**Architecture Decision Records (ADRs)**](docs/adr/)
+
 ## Building & Running
 
 ### Prerequisites
