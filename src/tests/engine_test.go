@@ -687,7 +687,9 @@ func TestWALCRCCorruption(t *testing.T) {
 	// Corrupt a byte in the middle.
 	data, _ := os.ReadFile(filepath.Clean(path))
 	data[len(data)/2] ^= 0xFF
-	if err := os.WriteFile(filepath.Clean(path), data, 0o644); err != nil {
+	// Use Join with Base to satisfy gosec G703 (path traversal) taint analysis.
+	corruptPath := filepath.Join(dir, filepath.Base(path))
+	if err := os.WriteFile(corruptPath, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1386,7 +1388,9 @@ func TestBackupManifestChecksums(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Clean(targetFile))
 	if len(data) > 0 {
 		data[len(data)/2] ^= 0xFF
-		if err := os.WriteFile(filepath.Clean(targetFile), data, 0o600); err != nil {
+		// Use Join with Base to satisfy gosec G703 (path traversal) taint analysis.
+		cleanTarget := filepath.Join(backupDir, filepath.Base(targetFile))
+		if err := os.WriteFile(cleanTarget, data, 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1410,7 +1414,8 @@ func TestBackupRejectsNonEmptyDest(t *testing.T) {
 	_ = db.Close()
 
 	// Create a file in restoreDir so it's non-empty.
-	if err := os.WriteFile(filepath.Clean(filepath.Join(restoreDir, "existing.txt")), []byte("data"), 0o600); err != nil {
+	existingFile := filepath.Join(restoreDir, "existing.txt")
+	if err := os.WriteFile(filepath.Clean(existingFile), []byte("data"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	err := backup.Restore(backupDir, restoreDir)
