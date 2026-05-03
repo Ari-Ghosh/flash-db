@@ -22,6 +22,9 @@ Welcome to the FlashDB documentation. This guide provides a comprehensive overvi
    - [Bloom Filter](components/BLOOM_FILTER.md)
    - [Compaction Engine](components/COMPACTION.md)
    - [Hot Backup & Restore](components/BACKUP_RESTORE.md)
+   - [WriteBatch (Atomic Multi-Key)](components/WRITE_BATCH.md)
+   - [Column Families (Namespaces)](components/COLUMN_FAMILIES.md)
+   - [Key TTL (Expiration)](components/TTL.md)
    - [Secondary Indexes](components/SECONDARY_INDEX.md)
 3. [**User Guide**](user-guide/)
    - [Getting Started](user-guide/GETTING_STARTED.md)
@@ -32,6 +35,8 @@ Welcome to the FlashDB documentation. This guide provides a comprehensive overvi
    - [ADR 002: OCC for Transactions](adr/002-optimistic-concurrency-control.md)
    - [ADR 003: WAL-Shipping Replication](adr/003-wal-shipping-replication.md)
    - [ADR 004: ARC Cache Implementation](adr/004-arc-cache-implementation.md)
+   - [ADR 005: Adaptive Bloom Filters](adr/005-adaptive-bloom-filters.md)
+   - [ADR 006: Internal Key Namespacing](adr/006-internal-key-namespacing.md)
 
 ---
 
