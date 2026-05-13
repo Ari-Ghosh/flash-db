@@ -1,6 +1,6 @@
 module github.com/Ari-Ghosh/flash-db
 
-go 1.25.8
+go 1.25.10
 
 require (
 	github.com/golang/snappy v1.0.0
