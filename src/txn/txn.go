@@ -28,7 +28,7 @@ import (
 	"fmt"
 	"sync/atomic"
 
-	types "local/flashdb/src/types"
+	types "github.com/Ari-Ghosh/flash-db/src/types"
 )
 
 // Sentinel errors.

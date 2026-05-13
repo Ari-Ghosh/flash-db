@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	types "local/flashdb/src/types"
+	types "github.com/Ari-Ghosh/flash-db/src/types"
 )
 
 // System-reserved key prefixes. Keys starting with \x00 are internal to flashDB.

@@ -37,7 +37,7 @@ import (
 	"fmt"
 	"sync"
 
-	types "local/flashdb/src/types"
+	types "github.com/Ari-Ghosh/flash-db/src/types"
 )
 
 // IndexDefinition describes one secondary index.

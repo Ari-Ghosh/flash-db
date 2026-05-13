@@ -10,7 +10,7 @@ package engine
 import (
 	"fmt"
 
-	"local/flashdb/src/wal"
+	"github.com/Ari-Ghosh/flash-db/src/wal"
 )
 
 // wbOp is one buffered operation inside a WriteBatch.

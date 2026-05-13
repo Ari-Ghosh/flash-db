@@ -11,6 +11,13 @@ The B-tree serves as the long-term, read-optimized storage layer in FlashDB.
 1. **Leaf Page**: Stores `(key, value, seqNum, tombstone)` entries.
 2. **Internal Page**: Stores separator keys and `uint64` child page IDs.
 
+## Compression
+FlashDB's B-tree implementation supports **per-page compression**. When enabled, the data portion of each page (after the 8-byte header) is compressed before writing to disk.
+- **L1 B-tree**: Uses **Snappy** for high performance on recently compacted data.
+- **L2 B-tree**: Uses **Zstd** for maximum density in long-term storage.
+
+Compression is handled transparently during page I/O, and the codec used is identified by a flag in the page header.
+
 ## Page Cache (ARC)
 The B-tree implementation includes an **Adaptive Replacement Cache (ARC)** to keep frequently and recently accessed pages in memory, minimizing disk I/O.
 

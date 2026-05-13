@@ -10,7 +10,7 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - local/flashdb
+        - github.com/Ari-Ghosh/flash-db
 
 linters:
   enable:

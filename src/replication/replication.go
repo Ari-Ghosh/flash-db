@@ -52,7 +52,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"local/flashdb/src/wal"
+	"github.com/Ari-Ghosh/flash-db/src/wal"
 )
 
 const (

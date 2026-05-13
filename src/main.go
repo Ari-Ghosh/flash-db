@@ -71,10 +71,10 @@ import (
 	"os"
 	"time"
 
-	"local/flashdb/src/backup"
-	"local/flashdb/src/engine"
-	"local/flashdb/src/replication"
-	types "local/flashdb/src/types"
+	"github.com/Ari-Ghosh/flash-db/src/backup"
+	"github.com/Ari-Ghosh/flash-db/src/engine"
+	"github.com/Ari-Ghosh/flash-db/src/replication"
+	types "github.com/Ari-Ghosh/flash-db/src/types"
 )
 
 func main() {

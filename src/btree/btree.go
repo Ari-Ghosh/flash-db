@@ -83,8 +83,8 @@ import (
 	"path/filepath"
 	"sync"
 
-	"local/flashdb/src/arc"
-	types "local/flashdb/src/types"
+	"github.com/Ari-Ghosh/flash-db/src/arc"
+	types "github.com/Ari-Ghosh/flash-db/src/types"
 )
 
 const (
@@ -130,15 +130,27 @@ type BTree struct {
 	rootID    uint64
 	pageCount uint64
 	cache     *arc.Cache[*page] // ARC page cache (replaces the old unbounded map)
+	comp      types.Compressor  // Pluggable compression
 }
 
 // Open opens or creates a B-tree file with the default ARC cache size.
 func Open(path string) (*BTree, error) {
-	return OpenWithCacheSize(path, DefaultCachePages)
+	return OpenWithCompressor(path, types.NoopCompressor{})
 }
 
 // OpenWithCacheSize opens or creates a B-tree file with the given ARC cache capacity.
 func OpenWithCacheSize(path string, cachePages int) (*BTree, error) {
+	// For backward compatibility, default to NoopCompressor
+	return OpenWithCompressorAndCache(path, types.NoopCompressor{}, cachePages)
+}
+
+// OpenWithCompressor opens or creates a B-tree file with the given compressor and default cache size.
+func OpenWithCompressor(path string, comp types.Compressor) (*BTree, error) {
+	return OpenWithCompressorAndCache(path, comp, DefaultCachePages)
+}
+
+// OpenWithCompressorAndCache opens or creates a B-tree file with given compressor and cache size.
+func OpenWithCompressorAndCache(path string, comp types.Compressor, cachePages int) (*BTree, error) {
 	f, err := os.OpenFile(filepath.Clean(path), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("btree open: %w", err)
@@ -147,6 +159,7 @@ func OpenWithCacheSize(path string, cachePages int) (*BTree, error) {
 		f:      f,
 		rootID: nullPage,
 		cache:  arc.New[*page](cachePages),
+		comp:   comp,
 	}
 	fi, err := f.Stat()
 	if err != nil {
@@ -405,7 +418,10 @@ func (bt *BTree) readPage(id uint64) (*page, error) {
 	if _, err := bt.f.ReadAt(buf, int64(id)*pageSize+512); err != nil {
 		return nil, fmt.Errorf("btree readPage %d: %w", id, err)
 	}
-	p := decodePage(id, buf)
+	p, err := bt.decodePage(id, buf)
+	if err != nil {
+		return nil, err
+	}
 	bt.cache.Put(id, p)
 	return p, nil
 }
@@ -424,7 +440,7 @@ func (bt *BTree) flushAll() error {
 		if !ok || !p.dirty {
 			continue
 		}
-		buf := encodePage(p)
+		buf := bt.encodePage(p)
 		if _, err := bt.f.WriteAt(buf, int64(p.id)*pageSize+512); err != nil {
 			return fmt.Errorf("btree flush page %d: %w", p.id, err)
 		}
@@ -459,7 +475,7 @@ func (bt *BTree) loadHeader() error {
 
 // ── Page encoding (unchanged wire format) ────────────────────────────────────
 
-func encodePage(p *page) []byte {
+func (bt *BTree) encodePage(p *page) []byte {
 	buf := make([]byte, pageSize)
 	binary.LittleEndian.PutUint16(buf[0:], p.pageType)
 	off := 8
@@ -504,64 +520,94 @@ func encodePage(p *page) []byte {
 			off += len(c.key)
 		}
 	}
-	return buf
+
+	if bt.comp == nil || bt.comp.Codec() == types.CodecNone {
+		return buf
+	}
+
+	// Try compressing the data part (skip first 8 bytes of header).
+	compressed, err := bt.comp.Compress(nil, buf[8:])
+	if err != nil || len(compressed) >= pageSize-8 {
+		return buf // fallback to uncompressed
+	}
+
+	newBuf := make([]byte, pageSize)
+	copy(newBuf, buf[:8])
+	newBuf[4] = byte(bt.comp.Codec())
+	copy(newBuf[8:], compressed)
+	return newBuf
 }
 
-func decodePage(id uint64, buf []byte) *page {
+func (bt *BTree) decodePage(id uint64, buf []byte) (*page, error) {
+	codec := types.Codec(buf[4])
+	var data []byte
+	if codec != types.CodecNone {
+		comp := types.NewCompressor(codec)
+		decompressed, err := comp.Decompress(nil, buf[8:])
+		if err != nil {
+			return nil, fmt.Errorf("btree: decompress page %d: %w", id, err)
+		}
+		data = make([]byte, pageSize)
+		copy(data, buf[:8])
+		copy(data[8:], decompressed)
+	} else {
+		data = buf
+	}
+
 	p := &page{id: id}
-	p.pageType = binary.LittleEndian.Uint16(buf[0:])
-	numKeys := int(binary.LittleEndian.Uint16(buf[2:]))
+	p.pageType = binary.LittleEndian.Uint16(data[0:])
+	numKeys := int(binary.LittleEndian.Uint16(data[2:]))
 	off := 8
 	if p.pageType == typeLeaf {
 		for i := 0; i < numKeys && off < pageSize; i++ {
 			if off+13 > pageSize {
 				break
 			}
-			flags := buf[off]
+			flags := data[off]
 			off++
-			seq := binary.LittleEndian.Uint64(buf[off:])
+			seq := binary.LittleEndian.Uint64(data[off:])
 			off += 8
-			kl := int(binary.LittleEndian.Uint16(buf[off:]))
+			kl := int(binary.LittleEndian.Uint16(data[off:]))
 			off += 2
 			if off+kl+2 > pageSize {
 				break
 			}
 			key := make([]byte, kl)
-			copy(key, buf[off:])
+			copy(key, data[off:])
 			off += kl
-			vl := int(binary.LittleEndian.Uint16(buf[off:]))
+			vl := int(binary.LittleEndian.Uint16(data[off:]))
 			off += 2
 			if off+vl > pageSize {
 				break
 			}
 			val := make([]byte, vl)
-			copy(val, buf[off:])
+			copy(val, data[off:])
 			off += vl
 			p.leaves = append(p.leaves, leafCell{
 				key: key, value: val, seqNum: seq, tombstone: flags&1 != 0,
 			})
 		}
 	} else {
-		p.rightmost = binary.LittleEndian.Uint64(buf[off:])
+		p.rightmost = binary.LittleEndian.Uint64(data[off:])
 		off += 8
 		for i := 0; i < numKeys && off < pageSize; i++ {
 			if off+10 > pageSize {
 				break
 			}
-			childID := binary.LittleEndian.Uint64(buf[off:])
+			childID := binary.LittleEndian.Uint64(data[off:])
 			off += 8
-			kl := int(binary.LittleEndian.Uint16(buf[off:]))
+			kl := int(binary.LittleEndian.Uint16(data[off:]))
 			off += 2
 			if off+kl > pageSize {
 				break
 			}
 			key := make([]byte, kl)
-			copy(key, buf[off:])
+			copy(key, data[off:])
 			off += kl
 			p.internals = append(p.internals, internalCell{key: key, leftChildID: childID})
 		}
 	}
-	return p
+	return p, nil
 }
 
 // Close flushes dirty pages and closes the file.

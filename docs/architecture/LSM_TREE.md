@@ -23,8 +23,8 @@ Compaction is the process of merging multiple L0 SSTables into the B-tree storag
 
 ### Tiered Compaction
 FlashDB uses a tiered approach:
-- **L0 → L1**: Small, frequent compactions that merge SSTables into the first-level B-tree.
-- **L1 → L2**: Less frequent, larger compactions that promote data from L1 to the final L2 storage.
+- **L0 → L1**: Small, frequent compactions that merge SSTables into the first-level B-tree. Both tiers use **Snappy compression** for balanced performance.
+- **L1 → L2**: Less frequent, larger compactions that promote data from L1 to the final L2 storage. The L2 tier uses **Zstd compression** to maximize disk space efficiency for historical data.
 
 ## k-Way Merge Algorithm
 Compaction uses a min-heap to merge multiple sorted streams (SSTables and B-trees) into a single sorted output stream.

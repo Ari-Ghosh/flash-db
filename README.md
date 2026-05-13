@@ -91,21 +91,22 @@ Leader Node                         Follower Node
 1. **WAL (Write-Ahead Log)**: Every write is immediately persisted as a log entry before touching in-memory structures. Group-commit amortizes fsync cost across concurrent writers.
 2. **MemTable**: Writes go into an in-memory skip list sorted by key.
 3. **WriteBatch**: Multiple puts/deletes can be committed in a single WAL batch + single fsync without full transaction overhead.
-4. **Flush**: When the MemTable reaches its size threshold it rotates to immutable and is flushed to disk as an SSTable (L0 file).
-5. **Compaction**: Multiple L0 SSTables are incrementally merged into the L1 B-tree via a k-way heap merge; L1 promotes to L2 when its size threshold is exceeded.
+4. **Flush**: When the MemTable reaches its size threshold it rotates to immutable and is flushed to disk as an SSTable (L0 file) using **Snappy compression** for low-latency writes.
+5. **Compaction**: Multiple L0 SSTables are incrementally merged into the L1 B-tree via a k-way heap merge; L1 promotes to L2 when its size threshold is exceeded. **Tiered compression** ensures optimal performance: L1 uses Snappy, while L2 uses Zstd for superior cold-storage density.
 
 ### Read Path (Tiered B-tree with ARC cache)
 
 1. **Active MemTable**: Check newest in-memory writes first (highest priority).
 2. **Immutable MemTable**: Check data currently being flushed.
-3. **L0 SSTables**: Bloom-filtered point lookups; false positives fed back into adaptive FPR telemetry.
-4. **L1 B-tree**: Recently compacted data; pages served from ARC cache when hot.
-5. **L2 B-tree**: Long-term storage; pages served from ARC cache when hot.
+3. **L0 SSTables**: Bloom-filtered point lookups (**Snappy compressed**).
+4. **L1 B-tree**: Recently compacted data; pages served from ARC cache when hot (**Snappy compressed**).
+5. **L2 B-tree**: Long-term storage; pages served from ARC cache when hot (**Zstd compressed**).
 
 ### Key Features
 
 | Feature | Description |
 |---|---|
+| **Tiered Compression** | **Snappy** for L0/L1 (latency) and **Zstd** for L2 (density) |
 | **MVCC Snapshots** | Point-in-time consistent reads via `db.NewSnapshot()` |
 | **Range Iterators** | Forward/reverse scans with `db.NewIterator(opts)` |
 | **WriteBatch** | Atomic multi-key writes via `db.NewWriteBatch()` |
@@ -163,7 +164,7 @@ The test suite covers all components including the five new v4 features with 95 
 ### Opening a Database
 
 ```go
-import "local/flashdb/src/engine"
+import "github.com/Ari-Ghosh/flash-db/src/engine"
 
 cfg := engine.DefaultConfig("/tmp/my_db")
 db, err := engine.Open(cfg)
@@ -426,7 +427,7 @@ Column-family names, TTL metadata, and secondary index entries are stored as reg
 - Group-commit batching; pluggable sync policy (SyncAlways / SyncBatch / SyncNone)
 
 **SSTable (Sorted String Table)**
-- Fixed-size 4 KB data blocks with optional compression
+- Fixed-size 4 KB data blocks with **automatic compression detection**
 - Index block mapping each block's first key to its byte offset
 - Bloom filter for fast negative lookups (adaptive FPR)
 - 40-byte footer: index offset/len, bloom offset/len, entry count, codec, magic
@@ -436,6 +437,7 @@ Column-family names, TTL metadata, and secondary index entries are stored as reg
 - 512-byte file header: magic, root page ID, page count
 - Internal pages: separator keys + child page pointers (up to 50 children)
 - Leaf pages: key/value entries with sequence numbers and tombstone flags
+- **Per-page compression** with codec flag in header (L1: Snappy, L2: Zstd)
 - Page reads/writes go through an ARC cache (default 2 048 pages = 8 MB)
 
 ### Internal Key Namespaces

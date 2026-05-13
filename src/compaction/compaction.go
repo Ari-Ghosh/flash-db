@@ -65,9 +65,9 @@ import (
 	"os"
 	"sync"
 
-	"local/flashdb/src/btree"
-	"local/flashdb/src/sstable"
-	types "local/flashdb/src/types"
+	"github.com/Ari-Ghosh/flash-db/src/btree"
+	"github.com/Ari-Ghosh/flash-db/src/sstable"
+	types "github.com/Ari-Ghosh/flash-db/src/types"
 )
 
 // BloomTelemetryCleaner lets compaction remove stale bloom-filter telemetry

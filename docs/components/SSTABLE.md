@@ -12,7 +12,7 @@ An SSTable file consists of several sections:
 ## Performance Optimization
 - **Binary Search**: The index block allows for fast block location.
 - **Bloom Filters**: Significantly reduce read amplification by skipping files that definitely do not contain the target key.
-- **Compression**: Blocks can be compressed (e.g., using Snappy or Zstd) to save disk space.
+- **Compression**: Blocks are compressed using **Snappy** by default for L0 SSTables to balance storage savings with flush latency. The file footer identifies the codec, supporting seamless transitions between different algorithms.
 
 ## Life Cycle
 1. **Flush**: Created when a MemTable is full.

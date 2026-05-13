@@ -6,7 +6,7 @@ FlashDB is an embedded key-value store, meaning it runs as a library within your
 Add FlashDB to your project using `go get`:
 
 ```bash
-go get local/flashdb/src
+go get github.com/Ari-Ghosh/flash-db/src
 ```
 
 ## Basic Usage
@@ -19,7 +19,7 @@ package main
 
 import (
 	"log"
-	"local/flashdb/src/engine"
+	"github.com/Ari-Ghosh/flash-db/src/engine"
 )
 
 func main() {

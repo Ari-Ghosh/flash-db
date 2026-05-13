@@ -73,8 +73,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"local/flashdb/src/bloom"
-	types "local/flashdb/src/types"
+	"github.com/Ari-Ghosh/flash-db/src/bloom"
+	types "github.com/Ari-Ghosh/flash-db/src/types"
 )
 
 const (
@@ -294,6 +294,7 @@ func (r *Reader) loadMeta(path string) error {
 	bloomLen := binary.LittleEndian.Uint32(footer[20:])
 	count := binary.LittleEndian.Uint32(footer[24:])
 	r.meta.Codec = types.Codec(footer[28])
+	r.comp = types.NewCompressor(r.meta.Codec)
 
 	indexBuf := make([]byte, indexLen)
 	if _, err := r.f.ReadAt(indexBuf, int64(indexOff)); err != nil {
@@ -332,6 +333,7 @@ func (r *Reader) loadLegacyMeta(path string, footer []byte) error {
 	r.meta.Bloom = bloom.FromBytes(bloomBuf)
 	r.meta.EntryCount = uint64(count)
 	r.meta.Codec = types.CodecNone
+	r.comp = types.NoopCompressor{}
 	r.meta.Path = path
 	return nil
 }

@@ -111,16 +111,16 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"local/flashdb/src/backup"
-	"local/flashdb/src/bloom"
-	"local/flashdb/src/btree"
-	"local/flashdb/src/compaction"
-	"local/flashdb/src/memtable"
-	"local/flashdb/src/replication"
-	"local/flashdb/src/sstable"
-	"local/flashdb/src/txn"
-	types "local/flashdb/src/types"
-	"local/flashdb/src/wal"
+	"github.com/Ari-Ghosh/flash-db/src/backup"
+	"github.com/Ari-Ghosh/flash-db/src/bloom"
+	"github.com/Ari-Ghosh/flash-db/src/btree"
+	"github.com/Ari-Ghosh/flash-db/src/compaction"
+	"github.com/Ari-Ghosh/flash-db/src/memtable"
+	"github.com/Ari-Ghosh/flash-db/src/replication"
+	"github.com/Ari-Ghosh/flash-db/src/sstable"
+	"github.com/Ari-Ghosh/flash-db/src/txn"
+	types "github.com/Ari-Ghosh/flash-db/src/types"
+	"github.com/Ari-Ghosh/flash-db/src/wal"
 )
 
 // Config holds all engine tuning parameters.
@@ -217,11 +217,11 @@ func Open(cfg Config) (*DB, error) {
 		cfg.BloomFPRMax = 0.05
 	}
 
-	l1Tree, err := btree.Open(filepath.Join(cfg.Dir, "btree_l1.db"))
+	l1Tree, err := btree.OpenWithCompressor(filepath.Join(cfg.Dir, "btree_l1.db"), types.NewCompressor(types.CodecSnappy))
 	if err != nil {
 		return nil, fmt.Errorf("engine: l1 btree: %w", err)
 	}
-	l2Tree, err := btree.Open(filepath.Join(cfg.Dir, "btree_l2.db"))
+	l2Tree, err := btree.OpenWithCompressor(filepath.Join(cfg.Dir, "btree_l2.db"), types.NewCompressor(types.CodecZstd))
 	if err != nil {
 		return nil, fmt.Errorf("engine: l2 btree: %w", err)
 	}
@@ -771,7 +771,10 @@ func (db *DB) flushImmutable() error {
 		db.cfg.BloomFPRMin,
 		db.cfg.BloomFPRMax,
 	)
-	w, err := sstable.NewWriterWithFPR(path, uint(len(entries)), fpr)
+
+	// Use Snappy for L0 SSTables (hot tier).
+	comp := types.NewCompressor(types.CodecSnappy)
+	w, err := sstable.NewWriterWithCodecAndFPR(path, uint(len(entries)), comp, fpr)
 	if err != nil {
 		return err
 	}
