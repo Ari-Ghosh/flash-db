@@ -2899,7 +2899,7 @@ func TestTieredCompression(t *testing.T) {
 		if r.Metadata().Codec != types.CodecSnappy {
 			t.Errorf("L0 SSTable %s using codec %v, want Snappy", p, r.Metadata().Codec)
 		}
-		_ = r.Close()
+	_ = r.Close()
 	}
 
 	// 2. Check if data is readable (verifies L1/L2 read/write)

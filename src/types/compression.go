@@ -27,13 +27,13 @@ func (s SnappyCompressor) Codec() Codec {
 type ZstdCompressor struct{}
 
 var (
-	//nolint:gochecknoglobals
+	//nolint:gochecknoglobals // zstd singletons are used for efficiency and reuse
 	zstdEncoderOnce sync.Once
-	//nolint:gochecknoglobals
+	//nolint:gochecknoglobals // zstd singletons are used for efficiency and reuse
 	zstdDecoderOnce sync.Once
-	//nolint:gochecknoglobals
+	//nolint:gochecknoglobals // zstd singletons are used for efficiency and reuse
 	globalEncoder *zstd.Encoder
-	//nolint:gochecknoglobals
+	//nolint:gochecknoglobals // zstd singletons are used for efficiency and reuse
 	globalDecoder *zstd.Decoder
 )
 
