@@ -24,16 +24,17 @@ func (s SnappyCompressor) Codec() Codec {
 }
 
 // ZstdCompressor implements the Compressor interface using Zstd.
-type ZstdCompressor struct {
-	encoder *zstd.Encoder
-	decoder *zstd.Decoder
-}
+type ZstdCompressor struct{}
 
 var (
+	//nolint:gochecknoglobals
 	zstdEncoderOnce sync.Once
+	//nolint:gochecknoglobals
 	zstdDecoderOnce sync.Once
-	globalEncoder   *zstd.Encoder
-	globalDecoder   *zstd.Decoder
+	//nolint:gochecknoglobals
+	globalEncoder *zstd.Encoder
+	//nolint:gochecknoglobals
+	globalDecoder *zstd.Decoder
 )
 
 func getZstdEncoder() *zstd.Encoder {
@@ -73,6 +74,8 @@ func (z ZstdCompressor) Codec() Codec {
 // NewCompressor returns a Compressor for the given Codec.
 func NewCompressor(codec Codec) Compressor {
 	switch codec {
+	case CodecNone:
+		return NoopCompressor{}
 	case CodecSnappy:
 		return SnappyCompressor{}
 	case CodecZstd:

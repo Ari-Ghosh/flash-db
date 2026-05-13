@@ -575,6 +575,7 @@ cfg.BloomFPRMax    = 0.05   // never go above 5%  (smaller filter)
 - [x] Secondary indexes with range queries and backfill
 
 **Phase 5 (planned):**
+- [x] Zstd/Snappy Block Compression
 - [ ] Prometheus metrics exporter
 - [ ] Streaming compaction to reduce peak memory
 - [ ] Structured query / filter pushdown

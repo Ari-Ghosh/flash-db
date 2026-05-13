@@ -2899,7 +2899,7 @@ func TestTieredCompression(t *testing.T) {
 		if r.Metadata().Codec != types.CodecSnappy {
 			t.Errorf("L0 SSTable %s using codec %v, want Snappy", p, r.Metadata().Codec)
 		}
-		r.Close()
+		_ = r.Close()
 	}
 
 	// 2. Check if data is readable (verifies L1/L2 read/write)
@@ -2931,13 +2931,16 @@ func TestBTreeCompression(t *testing.T) {
 		if err := bt.BulkLoad(entries); err != nil {
 			t.Fatal(err)
 		}
-		bt.Close()
+		_ = bt.Close()
 
 		// Read first page (after 512-byte header)
-		f, _ := os.Open(path)
+		f, err := os.Open(filepath.Clean(path))
+		if err != nil {
+			t.Fatal(err)
+		}
 		defer f.Close()
 		buf := make([]byte, 8)
-		f.ReadAt(buf, 512)
+		_, _ = f.ReadAt(buf, 512)
 		if buf[4] != byte(types.CodecSnappy) {
 			t.Errorf("expected codec Snappy (1) in page header, got %d", buf[4])
 		}
@@ -2961,13 +2964,16 @@ func TestBTreeCompression(t *testing.T) {
 		if err := bt.BulkLoad(entries); err != nil {
 			t.Fatal(err)
 		}
-		bt.Close()
+		_ = bt.Close()
 
 		// Read first page (after 512-byte header)
-		f, _ := os.Open(path)
+		f, err := os.Open(filepath.Clean(path))
+		if err != nil {
+			t.Fatal(err)
+		}
 		defer f.Close()
 		buf := make([]byte, 8)
-		f.ReadAt(buf, 512)
+		_, _ = f.ReadAt(buf, 512)
 		if buf[4] != byte(types.CodecZstd) {
 			t.Errorf("expected codec Zstd (2) in page header, got %d", buf[4])
 		}
@@ -2997,7 +3003,7 @@ func TestCompressors(t *testing.T) {
 				t.Fatalf("Decompress failed: %v", err)
 			}
 
-			if string(decompressed) != string(data) {
+			if !bytes.Equal(decompressed, data) {
 				t.Errorf("Decompressed data mismatch")
 			}
 		})
