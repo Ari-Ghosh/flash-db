@@ -2,7 +2,7 @@
 
 **Project Status:** Core implementation complete (v4 with WriteBatch, Column Families, TTL, ARC Cache, Secondary Indexes)  
 **Last Updated:** May 3, 2026  
-**Language:** Go 1.25.8
+**Language:** Go 1.25.10
 
 Welcome to the FlashDB documentation. This guide provides a comprehensive overview of the FlashDB architecture, its components, and how to use it in your applications.
 

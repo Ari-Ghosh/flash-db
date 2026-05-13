@@ -4,7 +4,7 @@ This guide provides detailed instructions for developing FlashDB locally.
 
 ## Prerequisites
 
-- Go 1.25.8 or later
+- Go 1.25.10 or later
 - Git
 - Make
 - Docker (optional, for containerized development)

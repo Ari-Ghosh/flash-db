@@ -12,7 +12,7 @@ Thank you for your interest in contributing to FlashDB! This document provides g
 
 ### Prerequisites
 
-- Go 1.25.8 or later
+- Go 1.25.10 or later
 - Git
 - Make (for running common tasks)
 
