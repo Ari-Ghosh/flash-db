@@ -64,6 +64,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/Ari-Ghosh/flash-db/src/btree"
 	"github.com/Ari-Ghosh/flash-db/src/sstable"
@@ -111,6 +112,9 @@ type Engine struct {
 	pending [][]string    // queued L0 file batches
 	quitCh  chan struct{}
 	doneCh  chan struct{}
+
+	l0MergeCount atomic.Uint64
+	l1MergeCount atomic.Uint64
 }
 
 // New creates a compaction engine.
@@ -199,20 +203,19 @@ func (e *Engine) compactL0(paths []string) error {
 	}()
 
 	oldest := e.snapProv.OldestPinnedSeq()
-	merged, err := kWayMerge(readers, oldest)
+
+	// Open L1 entries as a channel for streaming merge.
+	l1Chan, err := e.l1Tree.StreamEntries()
 	if err != nil {
-		return fmt.Errorf("compaction merge: %w", err)
+		return fmt.Errorf("compaction stream L1: %w", err)
 	}
 
-	// Incremental merge: read existing L1 entries and merge with new data.
-	existing, err := e.l1Tree.AllEntries()
+	iter, err := streamMerge(readers, l1Chan, oldest)
 	if err != nil {
-		return fmt.Errorf("compaction read existing L1: %w", err)
+		return fmt.Errorf("compaction stream-merge: %w", err)
 	}
 
-	combined := mergeTwo(existing, merged, oldest)
-
-	if err := e.l1Tree.BulkLoad(combined); err != nil {
+	if err := e.l1Tree.BulkLoadFromIter(iter); err != nil {
 		return fmt.Errorf("compaction bulk-load L1: %w", err)
 	}
 
@@ -220,14 +223,13 @@ func (e *Engine) compactL0(paths []string) error {
 		if err := os.Remove(p); err != nil {
 			log.Printf("compaction: remove %s: %v", p, err)
 		}
-		// Clean up stale bloom-filter telemetry for this SSTable.
 		if e.bloomTC != nil {
 			e.bloomTC.Remove(p)
 		}
 	}
-	log.Printf("compaction: merged %d L0 SSTables → L1 (%d entries total)", len(paths), len(combined))
+	log.Printf("compaction: merged %d L0 SSTables → L1 (streaming)", len(paths))
+	e.l0MergeCount.Add(1)
 
-	// Check if L1 is large enough to trigger L1→L2 compaction.
 	if e.l2Tree != nil {
 		go e.maybeCompactL1toL2()
 	}
@@ -272,7 +274,14 @@ func (e *Engine) maybeCompactL1toL2() {
 	}
 
 	log.Printf("compaction: L1→L2 complete (%d entries in L2)", len(combined))
+	e.l1MergeCount.Add(1)
 }
+
+// L0MergeCount returns the total number of L0→L1 compaction merges.
+func (e *Engine) L0MergeCount() uint64 { return e.l0MergeCount.Load() }
+
+// L1MergeCount returns the total number of L1→L2 compaction merges.
+func (e *Engine) L1MergeCount() uint64 { return e.l1MergeCount.Load() }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -324,7 +333,7 @@ func mergeTwo(base, overlay []types.Entry, oldestPinnedSeq uint64) []types.Entry
 	return out
 }
 
-// ── k-way merge ───────────────────────────────────────────────────────────────
+// ── heap types (used by streamMerge) ──────────────────────────────────────────
 
 type heapItem struct {
 	entry     types.Entry
@@ -358,76 +367,139 @@ func (h *mergeHeap) Pop() any {
 	return x
 }
 
-// kWayMerge performs a k-way merge, deduplicating by keeping highest seqNum.
-// Tombstones are kept if their SeqNum >= oldestPinnedSeq so live snapshots
-// can still observe deletions.
-func kWayMerge(readers []*sstable.Reader, oldestPinnedSeq uint64) ([]types.Entry, error) {
-	h := &mergeHeap{}
-	heap.Init(h)
+// ── streaming merge ───────────────────────────────────────────────────────────
 
-	for i, r := range readers {
+// streamMergeNexter is an interface for sources that yield entries sequentially.
+// Satisfied by both sstable.Reader.Iter() channels and btree.StreamEntries() channels.
+type streamMergeNexter struct {
+	ch  <-chan types.Entry
+	cur *types.Entry
+	ok  bool
+}
+
+func newStreamNexter(ch <-chan types.Entry) *streamMergeNexter {
+	n := &streamMergeNexter{ch: ch}
+	n.advance()
+	return n
+}
+
+func (n *streamMergeNexter) advance() {
+	e, ok := <-n.ch
+	if ok {
+		n.cur = &e
+		n.ok = true
+	} else {
+		n.cur = nil
+		n.ok = false
+	}
+}
+
+func (n *streamMergeNexter) valid() bool { return n.ok }
+
+// streamMerge performs a streaming k-way merge of L0 SSTables and L1 B-tree
+// entries, yielding deduplicated, tombstone-GC'd entries one at a time via a
+// channel.  Peak memory is O(k) where k is the number of source streams.
+// Unlike the old kWayMerge + mergeTwo approach, this never materializes the
+// entire result set.
+func streamMerge(readers []*sstable.Reader, l1Ch <-chan types.Entry, oldestPinnedSeq uint64) (types.Iterator, error) {
+	sources := make([]*streamMergeNexter, 0, len(readers)+1)
+	for _, r := range readers {
 		ch, err := r.Iter()
 		if err != nil {
 			return nil, err
 		}
-		if e, ok := <-ch; ok {
-			heap.Push(h, heapItem{entry: e, readerIdx: i, ch: ch})
+		sources = append(sources, newStreamNexter(ch))
+	}
+	sources = append(sources, newStreamNexter(l1Ch))
+
+	h := &mergeHeap{}
+	heap.Init(h)
+	for i, s := range sources {
+		if s.valid() {
+			heap.Push(h, heapItem{entry: *s.cur, readerIdx: i, ch: s.ch})
 		}
 	}
 
-	var result []types.Entry
-	var currentKey []byte
+	out := make(chan types.Entry, 256)
+	go func() {
+		defer close(out)
+		streamMergeInner(h, sources, oldestPinnedSeq, out)
+	}()
+
+	return &chanIter{ch: out}, nil
+}
+
+func streamMergeInner(h *mergeHeap, sources []*streamMergeNexter, oldestPinnedSeq uint64, out chan<- types.Entry) {
 	var candidates []types.Entry
+	var currentKey []byte
 
-	for h.Len() > 0 {
-		itemAny := heap.Pop(h)
-		item, ok := itemAny.(heapItem)
-		if !ok {
-			// unexpected type, skip or error
-			continue
+	emitBest := func() {
+		if len(candidates) == 0 {
+			return
 		}
-		e := item.entry
-
-		if next, ok := <-item.ch; ok {
-			heap.Push(h, heapItem{entry: next, readerIdx: item.readerIdx, ch: item.ch})
-		}
-
-		if currentKey == nil || !bytes.Equal(currentKey, e.Key) {
-			// Emit the best candidate for the previous key
-			if len(candidates) > 0 {
-				best := candidates[0]
-				for _, c := range candidates[1:] {
-					if c.SeqNum > best.SeqNum {
-						best = c
-					}
-				}
-				// Only GC tombstones that are invisible to all live snapshots.
-				if !best.Tombstone || best.SeqNum >= oldestPinnedSeq {
-					result = append(result, best)
-				}
-			}
-			// Start collecting for new key
-			currentKey = make([]byte, len(e.Key))
-			copy(currentKey, e.Key)
-			candidates = candidates[:0]
-		}
-
-		candidates = append(candidates, e)
-	}
-
-	// Emit the last key's best candidate
-	if len(candidates) > 0 {
 		best := candidates[0]
 		for _, c := range candidates[1:] {
 			if c.SeqNum > best.SeqNum {
 				best = c
 			}
 		}
-		// Only GC tombstones that are invisible to all live snapshots.
 		if !best.Tombstone || best.SeqNum >= oldestPinnedSeq {
-			result = append(result, best)
+			out <- best
 		}
+		candidates = candidates[:0]
 	}
 
-	return result, nil
+	for h.Len() > 0 {
+		itemAny := heap.Pop(h)
+		item, ok := itemAny.(heapItem)
+		if !ok {
+			continue
+		}
+		e := item.entry
+
+		src := sources[item.readerIdx]
+		src.advance()
+		if src.valid() {
+			heap.Push(h, heapItem{entry: *src.cur, readerIdx: item.readerIdx, ch: src.ch})
+		}
+
+		if currentKey == nil || !bytes.Equal(currentKey, e.Key) {
+			emitBest()
+			currentKey = e.Key
+		}
+		candidates = append(candidates, e)
+	}
+	emitBest()
 }
+
+type chanIter struct {
+	ch    chan types.Entry
+	cur   *types.Entry
+	done  bool
+	err   error
+}
+
+func (it *chanIter) advance() {
+	it.cur = nil
+	e, ok := <-it.ch
+	if !ok {
+		it.done = true
+		return
+	}
+	it.cur = &e
+}
+
+func (it *chanIter) Valid() bool {
+	if it.cur == nil && !it.done {
+		it.advance()
+	}
+	return it.cur != nil
+}
+func (it *chanIter) Next()             { it.advance() }
+func (it *chanIter) Prev()             {}
+func (it *chanIter) Key() []byte       { return it.cur.Key }
+func (it *chanIter) Value() []byte     { return it.cur.Value }
+func (it *chanIter) SeqNum() uint64    { return it.cur.SeqNum }
+func (it *chanIter) IsTombstone() bool { return it.cur.Tombstone }
+func (it *chanIter) Error() error      { return it.err }
+func (it *chanIter) Close() error      { return nil }

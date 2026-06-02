@@ -227,6 +227,53 @@ func (bt *BTree) AllEntries() ([]types.Entry, error) {
 	return bt.collectLeaves(bt.rootID)
 }
 
+// StreamEntries returns a channel that yields all entries in key order.
+// Unlike AllEntries, this does not buffer all entries in memory.
+// The RLock is released immediately after capturing the root ID and ensuring
+// any dirty pages are flushed — the tree contents won't change while
+// compaction is the only writer and this is only called before BulkLoadFromIter.
+func (bt *BTree) StreamEntries() (<-chan types.Entry, error) {
+	bt.mu.RLock()
+	rootID := bt.rootID
+	bt.mu.RUnlock()
+
+	ch := make(chan types.Entry, 256)
+	go func() {
+		defer close(ch)
+		bt.mu.RLock()
+		defer bt.mu.RUnlock()
+		_ = bt.streamLeaves(rootID, ch)
+	}()
+	return ch, nil
+}
+
+func (bt *BTree) streamLeaves(pageID uint64, ch chan<- types.Entry) error {
+	if pageID == nullPage {
+		return nil
+	}
+	p, err := bt.readPage(pageID)
+	if err != nil {
+		return err
+	}
+	if p.pageType == typeLeaf {
+		for _, c := range p.leaves {
+			ch <- types.Entry{
+				Key:       c.key,
+				Value:     c.value,
+				SeqNum:    c.seqNum,
+				Tombstone: c.tombstone,
+			}
+		}
+		return nil
+	}
+	for _, c := range p.internals {
+		if err := bt.streamLeaves(c.leftChildID, ch); err != nil {
+			return err
+		}
+	}
+	return bt.streamLeaves(p.rightmost, ch)
+}
+
 func (bt *BTree) collectLeaves(pageID uint64) ([]types.Entry, error) {
 	if pageID == nullPage {
 		return nil, nil
@@ -300,6 +347,10 @@ func (bt *BTree) NewIterator(opts types.IteratorOptions) (types.Iterator, error)
 		keyStr := string(e.Key)
 		if candidate := keyMap[keyStr]; candidate == e {
 			if !e.Tombstone || opts.IncludeTombstones {
+				if opts.Filter != nil && !opts.Filter(e) {
+					delete(keyMap, keyStr)
+					continue
+				}
 				entries = append(entries, *e)
 			}
 			delete(keyMap, keyStr)
@@ -344,6 +395,92 @@ func (bt *BTree) BulkLoad(entries []types.Entry) error {
 		return err
 	}
 	return bt.saveHeader()
+}
+
+// BulkLoadFromIter consumes a sorted iterator and builds the tree incrementally.
+// Unlike BulkLoad which holds all entries in memory, this method builds leaf
+// pages one at a time, flushing them to disk as they fill, then constructs
+// internal levels from the flushed page IDs.  Peak memory is proportional to
+// the page size, not the dataset size.
+//
+// The iterator must yield entries in sorted key order with deduplication and
+// tombstone GC already applied.
+func (bt *BTree) BulkLoadFromIter(iter types.Iterator) error {
+	bt.mu.Lock()
+	defer bt.mu.Unlock()
+
+	bt.cache = arc.New[*page](bt.cache.Len() + DefaultCachePages)
+	bt.pageCount = 0
+	bt.rootID = nullPage
+
+	const maxCellsPerLeaf = 50
+	var leafIDs []uint64
+	var current *page
+	var count int
+
+	flushLeaf := func() {
+		if current == nil || count == 0 {
+			return
+		}
+		current.dirty = true
+		id := bt.allocPage(current)
+		leafIDs = append(leafIDs, id)
+		bt.writePage(current)
+		current = nil
+		count = 0
+	}
+
+	for iter.Valid() {
+		e := types.Entry{
+			Key:       iter.Key(),
+			Value:     iter.Value(),
+			SeqNum:    iter.SeqNum(),
+			Tombstone: iter.IsTombstone(),
+		}
+		if current == nil {
+			current = &page{pageType: typeLeaf, rightmost: nullPage, dirty: true}
+		}
+		k := make([]byte, len(e.Key))
+		v := make([]byte, len(e.Value))
+		copy(k, e.Key)
+		copy(v, e.Value)
+		current.leaves = append(current.leaves, leafCell{
+			key: k, value: v, seqNum: e.SeqNum, tombstone: e.Tombstone,
+		})
+		count++
+		if count >= maxCellsPerLeaf {
+			flushLeaf()
+		}
+		iter.Next()
+	}
+	flushLeaf()
+
+	if len(leafIDs) == 0 {
+		root := &page{pageType: typeLeaf, rightmost: nullPage, dirty: true}
+		bt.rootID = bt.allocPage(root)
+		if err := bt.flushAll(); err != nil {
+			return err
+		}
+		return bt.saveHeader()
+	}
+
+	currentLevel := leafIDs
+	for len(currentLevel) > 1 {
+		currentLevel = bt.buildInternalLevel(currentLevel)
+	}
+	bt.rootID = currentLevel[0]
+
+	if err := bt.flushAll(); err != nil {
+		return err
+	}
+	return bt.saveHeader()
+}
+
+// writePage writes a single dirty page to the backing file immediately.
+func (bt *BTree) writePage(p *page) {
+	buf := bt.encodePage(p)
+	_, _ = bt.f.WriteAt(buf, int64(p.id)*pageSize+512)
+	p.dirty = false
 }
 
 func (bt *BTree) buildLeaves(entries []types.Entry) []uint64 {

@@ -30,3 +30,6 @@ FlashDB uses a tiered approach:
 Compaction uses a min-heap to merge multiple sorted streams (SSTables and B-trees) into a single sorted output stream.
 - **Heap Order**: `(key ASC, seqNum DESC)`. This ensures that for any key, the most recent version (highest sequence number) is processed first.
 - **Deduplication**: Once the most recent version of a key is yielded, all subsequent versions with the same key are discarded.
+
+### Streaming Merge (v5)
+Compaction now uses a **streaming k-way merge** that yields entries one at a time rather than collecting the full dataset into memory. The B-tree's `BulkLoadFromIter` consumes the stream, building and flushing pages incrementally. Peak memory is constant (proportional to the number of source streams), not proportional to the dataset size.

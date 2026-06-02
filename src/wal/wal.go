@@ -97,6 +97,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -151,6 +152,8 @@ type WAL struct {
 	flushCh chan struct{}
 	stopCh  chan struct{}
 	wg      sync.WaitGroup
+
+	syncCount atomic.Uint64
 }
 
 // Options configures WAL behaviour.
@@ -284,6 +287,7 @@ func (w *WAL) writeRaw(data []byte, doSync bool) error {
 		return err
 	}
 	if doSync {
+		w.syncCount.Add(1)
 		return w.f.Sync()
 	}
 	return nil
@@ -342,6 +346,7 @@ func (w *WAL) drainBatch() {
 	}
 	if writeErr == nil {
 		writeErr = w.f.Sync()
+		w.syncCount.Add(1)
 	}
 	w.mu.Unlock()
 
@@ -529,3 +534,6 @@ func (w *WAL) Delete() error {
 	_ = w.f.Close()
 	return os.Remove(w.path)
 }
+
+// SyncCount returns the total number of fsync calls made by this WAL.
+func (w *WAL) SyncCount() uint64 { return w.syncCount.Load() }

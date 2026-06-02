@@ -1,7 +1,7 @@
 # FlashDB Documentation
 
-**Project Status:** Core implementation complete (v4 with WriteBatch, Column Families, TTL, ARC Cache, Secondary Indexes)  
-**Last Updated:** May 3, 2026  
+**Project Status:** v5 — Streaming compaction, filter pushdown, Prometheus metrics, read-your-writes, distributed query fan-out  
+**Last Updated:** June 2, 2026  
 **Language:** Go 1.25.10
 
 Welcome to the FlashDB documentation. This guide provides a comprehensive overview of the FlashDB architecture, its components, and how to use it in your applications.
@@ -26,6 +26,8 @@ Welcome to the FlashDB documentation. This guide provides a comprehensive overvi
    - [Column Families (Namespaces)](components/COLUMN_FAMILIES.md)
    - [Key TTL (Expiration)](components/TTL.md)
    - [Secondary Indexes](components/SECONDARY_INDEX.md)
+   - [Prometheus Metrics](components/METRICS.md)
+   - [Query Fan-Out](components/QUERY_FANOUT.md)
 3. [**User Guide**](user-guide/)
    - [Getting Started](user-guide/GETTING_STARTED.md)
    - [API Reference](user-guide/API_REFERENCE.md)
@@ -37,6 +39,7 @@ Welcome to the FlashDB documentation. This guide provides a comprehensive overvi
    - [ADR 004: ARC Cache Implementation](adr/004-arc-cache-implementation.md)
    - [ADR 005: Adaptive Bloom Filters](adr/005-adaptive-bloom-filters.md)
    - [ADR 006: Internal Key Namespacing](adr/006-internal-key-namespacing.md)
+   - [ADR 007: Five-Phase Feature Plan](adr/007-five-features-plan.md)
 
 ---
 
@@ -51,6 +54,10 @@ FlashDB is a high-performance hybrid database engine combining **LSM (Log-Struct
 - **Scalability**: Single-leader replication with automatic catch-up.
 - **Reliability**: Hot backups with SHA-256 integrity verification.
 - **Flexibility**: Column Families, Key TTL, and Secondary Indexes.
+- **Observability**: Prometheus metrics exporter for monitoring.
+- **Distributed Queries**: Fan-out queries across leader and followers.
+- **Streaming Compaction**: Constant-memory compaction via incremental page flushing.
+- **Filter Pushdown**: Server-side predicate filtering in all storage layers.
 
 ### Performance at a Glance
 | Operation | Latency (P50) | Notes |

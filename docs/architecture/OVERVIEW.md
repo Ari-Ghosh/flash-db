@@ -7,6 +7,8 @@ FlashDB is a high-performance, embedded key-value store written in Go. It is des
 2. **B-Tree for Reads**: Data is eventually consolidated into a page-based B+ tree, which provides stable O(log n) lookups with minimal read amplification.
 3. **MVCC (Multi-Version Concurrency Control)**: All entries are versioned with sequence numbers, allowing for point-in-time snapshots and non-blocking reads.
 4. **Optimistic Concurrency Control**: Transactions use OCC to provide atomicity and isolation without the need for complex locking.
+5. **Streaming Compaction**: Compaction uses constant-memory streaming k-way merge, building B-tree pages incrementally without buffering the full dataset.
+6. **Filter Pushdown**: Predicate filters in `IteratorOptions` are pushed into each storage layer, skipping irrelevant entries at scan time.
 
 ## Component Interaction
 The following diagram illustrates how the core components interact during write and read operations:
@@ -15,7 +17,8 @@ The following diagram illustrates how the core components interact during write 
 ┌──────────────────────────────────────────────────────────────┐
 │                         Public API                           │
 │    Engine: Put/Get/Delete | NewSnapshot/Iterator            │
-│    Txn: Begin/Commit | PrefixScan | Backup/Restore          │
+│    Txn: Begin/Commit | FanOut | WaitForSeq | Backup/Restore  │
+│    Metrics: Prometheus /metrics endpoint                     │
 └─────────────────┬──────────────────────────────────────────────┘
                   │
         ┌─────────┼─────────┐
@@ -30,6 +33,7 @@ The following diagram illustrates how the core components interact during write 
                       │
                       v (compaction trigger)
               Compaction Engine
+           (Streaming k-way merge)
                       │
          ┌────────────┴────────────┐
          v                         v
@@ -51,3 +55,8 @@ FlashDB organizes data into tiers to balance write speed and read efficiency:
 - **Tier 1 (Disk, Unconsolidated)**: L0 SSTable files.
 - **Tier 2 (Disk, Optimized)**: L1 B-tree (recently compacted).
 - **Tier 3 (Disk, Final)**: L2 B-tree (long-term storage).
+
+## Observability & Distribution
+- **Prometheus Metrics**: 15 metrics exported via opt-in HTTP server at `/metrics`.
+- **Query Fan-Out**: Leader distributes queries to followers, merges results.
+- **Read-Your-Writes**: `WaitForSeq` blocks until a follower catches up to a write.

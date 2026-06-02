@@ -73,6 +73,7 @@ import (
 
 	"github.com/Ari-Ghosh/flash-db/src/backup"
 	"github.com/Ari-Ghosh/flash-db/src/engine"
+	"github.com/Ari-Ghosh/flash-db/src/metrics"
 	"github.com/Ari-Ghosh/flash-db/src/replication"
 	types "github.com/Ari-Ghosh/flash-db/src/types"
 )
@@ -304,5 +305,56 @@ func runReplicationDemo() error {
 		}
 	}
 	fmt.Println("\nDone.")
+
+	fmt.Println("\n── 6. Read-your-writes & Fan-out ──────────────────")
+	if err := runFanOutDemo(leaderDB, followerDB); err != nil {
+		return err
+	}
+
+	fmt.Println("\n── 7. Metrics exporter ──────────────────────────")
+	runMetricsDemo()
 	return nil
+}
+
+func runFanOutDemo(leaderDB, followerDB *engine.DB) error {
+	// Write to leader, wait for follower to catch up.
+	seq := leaderDB.Put([]byte("fanout:key1"), []byte("hello"))
+	if seq != nil {
+		return seq
+	}
+	if err := followerDB.WaitForSeq(leaderDB.SeqNum(), 2*time.Second); err != nil {
+		return fmt.Errorf("wait for seq: %w", err)
+	}
+	v, err := followerDB.Get([]byte("fanout:key1"))
+	if err != nil {
+		return fmt.Errorf("follower read: %w", err)
+	}
+	fmt.Printf("  read-your-writes: follower has fanout:key1=%s\n", v)
+
+	// Fan-out query.
+	iter, err := leaderDB.FanOut(types.IteratorOptions{Prefix: []byte("fanout:")})
+	if err != nil {
+		return fmt.Errorf("fan-out: %w", err)
+	}
+	defer func() { _ = iter.Close() }()
+	fmt.Print("  fan-out results: ")
+	n := 0
+	for iter.Valid() {
+		fmt.Printf("%s=%s ", iter.Key(), iter.Value())
+		iter.Next()
+		n++
+	}
+	fmt.Printf("(%d entries)\n", n)
+	return nil
+}
+
+func runMetricsDemo() {
+	exp := metrics.NewExporter("127.0.0.1:19090")
+	if err := exp.Start(); err != nil {
+		fmt.Printf("  metrics: %v\n", err)
+		return
+	}
+	defer exp.Stop()
+	fmt.Println("  metrics server running at http://127.0.0.1:19090/metrics")
+	time.Sleep(200 * time.Millisecond)
 }

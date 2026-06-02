@@ -59,6 +59,7 @@ const (
 	protocolMagic  = uint64(0xF1A5DB00F1A5DB00)
 	maxFrameSize   = 64 * 1024 * 1024 // 64 MB
 	challengeBytes = 32
+	frameKindWAL   byte = 0x01
 )
 
 // Errors.
@@ -68,6 +69,7 @@ var (
 	ErrFrameTooLarge    = errors.New("replication: frame exceeds max size")
 	ErrChecksumMismatch = errors.New("replication: frame checksum mismatch")
 	ErrReadOnly         = errors.New("replication: follower is read-only")
+	ErrUnknownFrameKind = errors.New("replication: unknown frame kind")
 )
 
 // Config configures a replication node.
@@ -80,6 +82,9 @@ type Config struct {
 	// LeaderAddr is the TCP address of the leader to connect to.
 	// Required for Role=="follower".
 	LeaderAddr string
+	// QueryListenAddr is the TCP address for the follower's query server.
+	// Required on followers when distributed fan-out queries are expected.
+	QueryListenAddr string
 	// Secret is the pre-shared authentication secret.
 	// Must be the same on leader and all followers.
 	Secret []byte
@@ -168,6 +173,13 @@ func (l *Leader) Ship(r WALRecord) {
 	l.mu.RUnlock()
 }
 
+// FollowerCount returns the number of currently connected followers.
+func (l *Leader) FollowerCount() int {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return len(l.followers)
+}
+
 // Stop closes the listener and disconnects all followers.
 func (l *Leader) Stop() {
 	close(l.stopCh)
@@ -251,7 +263,10 @@ func (l *Leader) handleFollower(conn net.Conn) {
 		for _, r := range records {
 			frame := encodeFrame(r)
 			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if _, err := conn.Write(frame); err != nil {
+			fc.writeMu.Lock()
+			_, err := conn.Write(frame)
+			fc.writeMu.Unlock()
+			if err != nil {
 				return
 			}
 			fromSeq = r.SeqNum
@@ -388,7 +403,7 @@ func (f *Follower) runOnce() error {
 	f.connected.Store(true)
 	log.Printf("replication follower: connected to %s (fromSeq=%d)", f.cfg.LeaderAddr, f.lastSeq.Load())
 
-	// Stream records.
+	// Stream records and handle queries.
 	for {
 		select {
 		case <-f.stopCh:
@@ -397,19 +412,36 @@ func (f *Follower) runOnce() error {
 		}
 
 		_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
-		r, err := decodeFrame(conn)
-		if err != nil {
+		kind := make([]byte, 1)
+		if _, err := io.ReadFull(conn, kind); err != nil {
 			var netErr net.Error
 			if errors.As(err, &netErr) && netErr.Timeout() {
-				continue // keep-alive timeout, retry read
+				continue
 			}
-			return fmt.Errorf("decode frame: %w", err)
+			return fmt.Errorf("read frame kind: %w", err)
 		}
-
-		if err := f.applier.ApplyWALRecord(r); err != nil {
-			return fmt.Errorf("apply record seq=%d: %w", r.SeqNum, err)
+		switch kind[0] {
+		case frameKindWAL:
+			r, err := decodeWALFrame(conn)
+			if err != nil {
+				return fmt.Errorf("decode WAL frame: %w", err)
+			}
+			if err := f.applier.ApplyWALRecord(r); err != nil {
+				return fmt.Errorf("apply record seq=%d: %w", r.SeqNum, err)
+			}
+			f.lastSeq.Store(r.SeqNum)
+		case frameKindQueryReq:
+			qa, ok := f.applier.(AppendQueryApplier)
+			if !ok {
+				return fmt.Errorf("follower does not support queries")
+			}
+			_ = conn.SetDeadline(time.Time{})
+			if err := serveQuery(conn, qa); err != nil {
+				return fmt.Errorf("serve query: %w", err)
+			}
+		default:
+			return fmt.Errorf("%w: 0x%02x", ErrUnknownFrameKind, kind[0])
 		}
-		f.lastSeq.Store(r.SeqNum)
 	}
 }
 
@@ -417,14 +449,15 @@ func (f *Follower) runOnce() error {
 
 func encodeFrame(r WALRecord) []byte {
 	payload := marshalRecord(r)
-	frame := make([]byte, 8+len(payload))
-	binary.LittleEndian.PutUint32(frame[0:], crc32.ChecksumIEEE(payload))
-	binary.LittleEndian.PutUint32(frame[4:], uint32(len(payload)))
-	copy(frame[8:], payload)
+	frame := make([]byte, 1+8+len(payload))
+	frame[0] = frameKindWAL
+	binary.LittleEndian.PutUint32(frame[1:], crc32.ChecksumIEEE(payload))
+	binary.LittleEndian.PutUint32(frame[5:], uint32(len(payload)))
+	copy(frame[9:], payload)
 	return frame
 }
 
-func decodeFrame(r io.Reader) (WALRecord, error) {
+func decodeWALFrame(r io.Reader) (WALRecord, error) {
 	var hdr [8]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
 		return WALRecord{}, err
@@ -569,8 +602,9 @@ func (rb *ringBuffer) since(afterSeq uint64) []WALRecord {
 // ── followerConn ──────────────────────────────────────────────────────────────
 
 type followerConn struct {
-	conn   net.Conn
-	notify chan struct{}
+	conn    net.Conn
+	notify  chan struct{}
+	writeMu sync.Mutex
 }
 
 // ── I/O helpers ───────────────────────────────────────────────────────────────

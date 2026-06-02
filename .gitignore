@@ -23,6 +23,7 @@ flashdb
 
 ### IDE ###
 .vscode/
+.commandcode/
 .idea/
 *.swp
 *.swo

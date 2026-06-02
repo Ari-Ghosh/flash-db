@@ -114,6 +114,10 @@ type IteratorOptions struct {
 	SnapshotSeq uint64
 	// IncludeTombstones exposes deletion markers to the caller.
 	IncludeTombstones bool
+	// Filter is an optional predicate applied at scan time.  Entries for
+	// which Filter returns false are skipped and never surfaced to the
+	// caller.  When nil, all entries are returned.
+	Filter func(entry *Entry) bool
 }
 
 // Iterator provides ordered range iteration over a consistent view.

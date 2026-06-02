@@ -453,6 +453,9 @@ func (r *Reader) NewIterator(opts types.IteratorOptions) (types.Iterator, error)
 			if e.Tombstone && !opts.IncludeTombstones {
 				continue
 			}
+			if opts.Filter != nil && !opts.Filter(&e) {
+				continue
+			}
 			entries = append(entries, e)
 		}
 	}

@@ -24,8 +24,19 @@ The B-tree implementation includes an **Adaptive Replacement Cache (ARC)** to ke
 ## Bulk Load
 Instead of traditional random inserts, FlashDB uses a **Bulk Load** algorithm during compaction. It builds a completely new B-tree from a sorted stream of entries, ensuring 100% page fill factor and sequential disk I/O.
 
+### Streaming Bulk Load (v5)
+`BulkLoadFromIter(types.Iterator)` consumes a sorted iterator, building leaf pages incrementally. Each full page is flushed to disk immediately, keeping peak memory proportional to page size rather than dataset size.
+
+`StreamEntries()` yields all entries via a channel without buffering, enabling streaming k-way merge during compaction.
+
+## Filter Pushdown (v5)
+The B-tree iterator applies `IteratorOptions.Filter` at scan time, skipping non-matching entries before they reach the merged iterator layer.
+
 ## API
 - `Open(path)`: Open or create a B-tree file.
 - `Get(key)`: Traverse the tree to find a key.
 - `BulkLoad(entries)`: Replace the tree contents with new sorted data.
-- `NewIterator(opts)`: Range scans over the B-tree.
+- `BulkLoadFromIter(iter)`: Streaming bulk load from an iterator.
+- `StreamEntries()`: Yield all entries via channel.
+- `NewIterator(opts)`: Range scans over the B-tree with optional Filter.
+- `AllEntries()`: Read all entries into memory (legacy, for L1→L2 compaction).

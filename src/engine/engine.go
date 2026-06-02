@@ -110,6 +110,7 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/Ari-Ghosh/flash-db/src/backup"
 	"github.com/Ari-Ghosh/flash-db/src/bloom"
@@ -191,6 +192,11 @@ type DB struct {
 
 	// flushReady signals FlushSync that a flush completed.
 	flushDone chan struct{}
+
+	// Metric counters (atomic for lock-free increment on the hot path).
+	putCount    atomic.Uint64
+	deleteCount atomic.Uint64
+	getCount    atomic.Uint64
 }
 
 // Open opens or creates a flashDB at cfg.Dir.
@@ -428,6 +434,7 @@ func (db *DB) ApplyTxn(txnID, txnSeq uint64, ops []txn.TxnOp) error {
 
 // Put writes key=value into the DB.
 func (db *DB) Put(key, value []byte) error {
+	db.putCount.Add(1)
 	if err := db.checkClosed(); err != nil {
 		return err
 	}
@@ -449,6 +456,7 @@ func (db *DB) Put(key, value []byte) error {
 
 // Delete marks key as deleted.
 func (db *DB) Delete(key []byte) error {
+	db.deleteCount.Add(1)
 	if err := db.checkClosed(); err != nil {
 		return err
 	}
@@ -478,6 +486,7 @@ func (db *DB) Begin() *txn.Txn {
 
 // Get returns the value for key at the current view.
 func (db *DB) Get(key []byte) ([]byte, error) {
+	db.getCount.Add(1)
 	return db.GetAt(key, db.seq.Load())
 }
 
@@ -676,12 +685,147 @@ func (db *DB) ApplyWALRecord(r replication.WALRecord) error {
 	case wal.KindDelete:
 		return db.memtable.Delete(r.Key, r.SeqNum)
 	default:
-		return nil // txn control records handled by WAL replay
+		return nil
 	}
 }
 
 // LastAppliedSeq returns the highest sequence number this node has applied.
 func (db *DB) LastAppliedSeq() uint64 { return db.seq.Load() }
+
+// ExecuteQuery satisfies replication.AppendQueryApplier for follower query fan-out.
+func (db *DB) ExecuteQuery(req replication.QueryRequest) (replication.QueryResultIter, error) {
+	opts := types.IteratorOptions{
+		LowerBound:        req.LowerBound,
+		UpperBound:        req.UpperBound,
+		Prefix:            req.Prefix,
+		Reverse:           req.Reverse,
+		SnapshotSeq:       req.SnapshotSeq,
+		IncludeTombstones: req.IncludeTombstones,
+	}
+	iter, err := db.NewIterator(opts)
+	if err != nil {
+		return nil, err
+	}
+	return &queryResultIterWrap{iter: iter}, nil
+}
+
+// FanOut executes a query locally and fans out to all connected followers,
+// returning a merged iterator over all result sets.
+// Only valid on a leader node.
+func (db *DB) FanOut(opts types.IteratorOptions) (types.Iterator, error) {
+	if db.leader == nil {
+		return nil, fmt.Errorf("fan-out: not a leader")
+	}
+	if opts.SnapshotSeq == 0 {
+		opts.SnapshotSeq = db.seq.Load()
+	}
+
+	req := replication.QueryRequest{
+		Reverse:           opts.Reverse,
+		SnapshotSeq:       opts.SnapshotSeq,
+		IncludeTombstones: opts.IncludeTombstones,
+		LowerBound:        opts.LowerBound,
+		UpperBound:        opts.UpperBound,
+		Prefix:            opts.Prefix,
+	}
+
+	// Local iterator.
+	localIter, err := db.NewIterator(opts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Fan out to followers.
+	streams := db.leader.FanOutQuery(req)
+
+	// Build merged iterator: local + all follower streams.
+	iters := make([]types.Iterator, 0, 1+len(streams))
+	iters = append(iters, localIter)
+
+	for _, ch := range streams {
+		iters = append(iters, &fanOutIter{ch: ch})
+	}
+
+	return newMergedIterator(iters, opts.Reverse), nil
+}
+
+// queryResultIterWrap adapts types.Iterator to replication.QueryResultIter.
+type queryResultIterWrap struct {
+	iter types.Iterator
+	adv  bool
+}
+
+func (q *queryResultIterWrap) Next() (replication.QueryResponse, bool) {
+	if !q.adv {
+		q.adv = true
+	} else {
+		q.iter.Next()
+	}
+	if !q.iter.Valid() {
+		return replication.QueryResponse{}, false
+	}
+	return replication.QueryResponse{
+		Key:       q.iter.Key(),
+		Value:     q.iter.Value(),
+		SeqNum:    q.iter.SeqNum(),
+		Tombstone: q.iter.IsTombstone(),
+	}, true
+}
+
+func (q *queryResultIterWrap) Close() error { return q.iter.Close() }
+
+// fanOutIter adapts a channel of QueryResponse to types.Iterator.
+type fanOutIter struct {
+	ch   <-chan replication.QueryResponse
+	cur  *types.Entry
+	done bool
+}
+
+func (it *fanOutIter) Valid() bool {
+	if it.cur == nil && !it.done {
+		resp, ok := <-it.ch
+		if !ok {
+			it.done = true
+			return false
+		}
+		it.cur = &types.Entry{
+			Key:       resp.Key,
+			Value:     resp.Value,
+			SeqNum:    resp.SeqNum,
+			Tombstone: resp.Tombstone,
+		}
+	}
+	return it.cur != nil
+}
+func (it *fanOutIter) Next()             { it.cur = nil }
+func (it *fanOutIter) Prev()             {}
+func (it *fanOutIter) Key() []byte       { return it.cur.Key }
+func (it *fanOutIter) Value() []byte     { return it.cur.Value }
+func (it *fanOutIter) SeqNum() uint64    { return it.cur.SeqNum }
+func (it *fanOutIter) IsTombstone() bool { return it.cur.Tombstone }
+func (it *fanOutIter) Error() error      { return nil }
+func (it *fanOutIter) Close() error {
+	for range it.ch {
+	}
+	return nil
+}
+
+// WaitForSeq blocks until the local sequence number is at least seqNum or
+// the timeout elapses.  On a leader or standalone node it returns immediately
+// since writes are synchronous.  On a follower, it polls until the replicated
+// seq catches up.
+func (db *DB) WaitForSeq(seqNum uint64, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for db.seq.Load() < seqNum {
+		<-tick.C
+		if time.Now().After(deadline) {
+			return fmt.Errorf("wait for seq %d: timeout after %v (currently at %d)", seqNum, timeout, db.seq.Load())
+		}
+	}
+	return nil
+}
 
 // ── backup.BackupSource interface ─────────────────────────────────────────────
 
@@ -1021,6 +1165,58 @@ func (db *DB) BloomStats() BloomFilterStats {
 		ObservedFPR:         observed,
 		CurrentTargetFPR:    db.bloomTelemetry.Recommend(db.cfg.BloomFPRTarget, db.cfg.BloomFPRMin, db.cfg.BloomFPRMax),
 	}
+}
+
+// ── metrics.Collectors interface ──────────────────────────────────────────────
+
+func (db *DB) SeqNum() uint64              { return db.seq.Load() }
+func (db *DB) MemTableSize() int64          { return db.memtable.Size() }
+func (db *DB) MemTableCount() int64         { return db.memtable.Count() }
+func (db *DB) L0FileCount() int {
+	db.l0Mu.Lock()
+	defer db.l0Mu.Unlock()
+	return len(db.l0Files)
+}
+func (db *DB) PutCount() uint64             { return db.putCount.Load() }
+func (db *DB) DeleteCount() uint64          { return db.deleteCount.Load() }
+func (db *DB) GetCount() uint64             { return db.getCount.Load() }
+func (db *DB) WALSyncCount() uint64         { return db.walActive.SyncCount() }
+func (db *DB) L0MergeCount() uint64         { return db.compactor.L0MergeCount() }
+func (db *DB) L1MergeCount() uint64         { return db.compactor.L1MergeCount() }
+
+func (db *DB) FollowerCount() int {
+	if db.leader == nil {
+		return 0
+	}
+	return db.leader.FollowerCount()
+}
+
+func (db *DB) IsFollowerConnected() bool {
+	if db.follower == nil {
+		return false
+	}
+	return db.follower.IsConnected()
+}
+
+func (db *DB) FollowerLastSeq() uint64 {
+	if db.follower == nil {
+		return 0
+	}
+	return db.follower.LastSeq()
+}
+
+func (db *DB) BloomTotalQueries() uint64 {
+	q, _ := db.bloomTelemetry.AggregateStats()
+	return q
+}
+
+func (db *DB) BloomFalsePositives() uint64 {
+	_, fp := db.bloomTelemetry.AggregateStats()
+	return fp
+}
+
+func (db *DB) BloomCurrentFPR() float64 {
+	return db.bloomTelemetry.Recommend(db.cfg.BloomFPRTarget, db.cfg.BloomFPRMin, db.cfg.BloomFPRMax)
 }
 
 // ── Merged iterator (unchanged from v2) ──────────────────────────────────────

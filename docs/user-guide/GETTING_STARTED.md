@@ -80,3 +80,54 @@ for iter.Valid() {
     iter.Next()
 }
 ```
+
+### 6. Filtered Scans (v5)
+Apply a predicate filter at scan time — non-matching entries are skipped in the storage layer.
+
+```go
+iter, err := db.NewIterator(types.IteratorOptions{
+    LowerBound: []byte("user:"),
+    UpperBound: []byte("user;"),  // ':' + 1
+    Filter: func(e *types.Entry) bool {
+        return !e.Tombstone && len(e.Value) > 0
+    },
+})
+```
+
+### 7. Fan-Out Queries (v5, leader only)
+Distribute a read query to all followers and merge results.
+
+```go
+iter, err := leaderDB.FanOut(types.IteratorOptions{
+    Prefix: []byte("user:"),
+})
+defer iter.Close()
+
+for iter.Valid() {
+    fmt.Printf("%s: %s\n", iter.Key(), iter.Value())
+    iter.Next()
+}
+```
+
+### 8. Read-Your-Writes on Followers (v5)
+Block until a follower has applied a write before reading.
+
+```go
+leaderDB.Put([]byte("key"), []byte("value"))
+seq := leaderDB.SeqNum()
+followerDB.WaitForSeq(seq, 2*time.Second)
+v, _ := followerDB.Get([]byte("key")) // guaranteed consistent
+```
+
+### 9. Prometheus Metrics (v5)
+Start the metrics exporter to monitor your FlashDB instance.
+
+```go
+import "github.com/Ari-Ghosh/flash-db/src/metrics"
+
+exp := metrics.NewExporter(":9090")
+exp.Register(db)
+exp.Start()
+defer exp.Stop()
+// Metrics at http://localhost:9090/metrics
+```

@@ -576,11 +576,11 @@ cfg.BloomFPRMax    = 0.05   // never go above 5%  (smaller filter)
 
 **Phase 5 (planned):**
 - [x] Zstd/Snappy Block Compression
-- [ ] Prometheus metrics exporter
-- [ ] Streaming compaction to reduce peak memory
-- [ ] Structured query / filter pushdown
-- [ ] Read-your-writes consistency guarantee for followers
-- [ ] Distributed query fan-out across followers
+- [x] Prometheus metrics exporter
+- [x] Streaming compaction to reduce peak memory
+- [x] Structured query / filter pushdown
+- [x] Read-your-writes consistency guarantee for followers
+- [x] Distributed query fan-out across followers
 - [ ] CLI and REPL tool
 - [ ] Structured logging with `slog`
 - [ ] Pluggable storage backend
