@@ -473,10 +473,10 @@ func streamMergeInner(h *mergeHeap, sources []*streamMergeNexter, oldestPinnedSe
 }
 
 type chanIter struct {
-	ch    chan types.Entry
-	cur   *types.Entry
-	done  bool
-	err   error
+	ch   chan types.Entry
+	cur  *types.Entry
+	done bool
+	err  error
 }
 
 func (it *chanIter) advance() {

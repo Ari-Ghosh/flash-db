@@ -1169,20 +1169,20 @@ func (db *DB) BloomStats() BloomFilterStats {
 
 // ── metrics.Collectors interface ──────────────────────────────────────────────
 
-func (db *DB) SeqNum() uint64              { return db.seq.Load() }
-func (db *DB) MemTableSize() int64          { return db.memtable.Size() }
-func (db *DB) MemTableCount() int64         { return db.memtable.Count() }
+func (db *DB) SeqNum() uint64       { return db.seq.Load() }
+func (db *DB) MemTableSize() int64  { return db.memtable.Size() }
+func (db *DB) MemTableCount() int64 { return db.memtable.Count() }
 func (db *DB) L0FileCount() int {
 	db.l0Mu.Lock()
 	defer db.l0Mu.Unlock()
 	return len(db.l0Files)
 }
-func (db *DB) PutCount() uint64             { return db.putCount.Load() }
-func (db *DB) DeleteCount() uint64          { return db.deleteCount.Load() }
-func (db *DB) GetCount() uint64             { return db.getCount.Load() }
-func (db *DB) WALSyncCount() uint64         { return db.walActive.SyncCount() }
-func (db *DB) L0MergeCount() uint64         { return db.compactor.L0MergeCount() }
-func (db *DB) L1MergeCount() uint64         { return db.compactor.L1MergeCount() }
+func (db *DB) PutCount() uint64     { return db.putCount.Load() }
+func (db *DB) DeleteCount() uint64  { return db.deleteCount.Load() }
+func (db *DB) GetCount() uint64     { return db.getCount.Load() }
+func (db *DB) WALSyncCount() uint64 { return db.walActive.SyncCount() }
+func (db *DB) L0MergeCount() uint64 { return db.compactor.L0MergeCount() }
+func (db *DB) L1MergeCount() uint64 { return db.compactor.L1MergeCount() }
 
 func (db *DB) FollowerCount() int {
 	if db.leader == nil {

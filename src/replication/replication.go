@@ -56,9 +56,9 @@ import (
 )
 
 const (
-	protocolMagic  = uint64(0xF1A5DB00F1A5DB00)
-	maxFrameSize   = 64 * 1024 * 1024 // 64 MB
-	challengeBytes = 32
+	protocolMagic       = uint64(0xF1A5DB00F1A5DB00)
+	maxFrameSize        = 64 * 1024 * 1024 // 64 MB
+	challengeBytes      = 32
 	frameKindWAL   byte = 0x01
 )
 
@@ -369,7 +369,14 @@ func (f *Follower) runOnce() error {
 	}
 	defer func() { _ = conn.Close() }()
 
-	// Auth: read challenge, send HMAC response.
+	if err := f.authenticateAndHandshake(conn); err != nil {
+		return err
+	}
+
+	return f.processFrames(conn)
+}
+
+func (f *Follower) authenticateAndHandshake(conn net.Conn) error {
 	challenge := make([]byte, challengeBytes)
 	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 	if _, err := io.ReadFull(conn, challenge); err != nil {
@@ -381,12 +388,10 @@ func (f *Follower) runOnce() error {
 		return fmt.Errorf("send auth: %w", err)
 	}
 
-	// Send our last applied seq.
 	if err := writeUint64(conn, f.lastSeq.Load()); err != nil {
 		return fmt.Errorf("send fromSeq: %w", err)
 	}
 
-	// Read server OK.
 	var magic uint64
 	if err := readUint64(conn, &magic); err != nil {
 		return fmt.Errorf("read handshake: %w", err)
@@ -402,8 +407,10 @@ func (f *Follower) runOnce() error {
 	_ = conn.SetDeadline(time.Time{})
 	f.connected.Store(true)
 	log.Printf("replication follower: connected to %s (fromSeq=%d)", f.cfg.LeaderAddr, f.lastSeq.Load())
+	return nil
+}
 
-	// Stream records and handle queries.
+func (f *Follower) processFrames(conn net.Conn) error {
 	for {
 		select {
 		case <-f.stopCh:

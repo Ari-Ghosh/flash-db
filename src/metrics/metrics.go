@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -71,7 +72,11 @@ func (e *Exporter) Start() error {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{Registry: reg}))
 
-	e.srv = &http.Server{Addr: e.addr, Handler: mux}
+	e.srv = &http.Server{
+		Addr:              e.addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
 
 	e.wg.Add(1)
 	go func() {
@@ -194,16 +199,16 @@ func (c *dbCollector) Collect(ch chan<- prometheus.Metric) {
 	c.exporter.mu.RUnlock()
 
 	var (
-		seqNum                  uint64
-		memSize, memCount       int64
-		l0Count                 int
-		bloomQ, bloomFP         uint64
-		bloomFPR                float64
-		putC, delC, getC        uint64
-		l0Merge, l1Merge        uint64
-		walSync                 uint64
-		fCount, fConnected      int
-		lastSeq                 uint64
+		seqNum             uint64
+		memSize, memCount  int64
+		l0Count            int
+		bloomQ, bloomFP    uint64
+		bloomFPR           float64
+		putC, delC, getC   uint64
+		l0Merge, l1Merge   uint64
+		walSync            uint64
+		fCount, fConnected int
+		lastSeq            uint64
 	)
 
 	for _, col := range cols {
