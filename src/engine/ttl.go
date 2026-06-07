@@ -33,7 +33,6 @@ package engine
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 	"time"
 
 	types "github.com/Ari-Ghosh/flash-db/src/types"
@@ -203,10 +202,10 @@ func (db *DB) reaperSweep() {
 
 	for _, pair := range expired {
 		if err := db.deleteWithTTLMeta(pair.k); err != nil {
-			log.Printf("ttl reaper: delete %x: %v", pair.k, err)
+			db.log.Warn("ttl reaper: delete failed", "key", fmt.Sprintf("%x", pair.k), "error", err)
 		}
 	}
 	if len(expired) > 0 {
-		log.Printf("ttl reaper: reaped %d expired keys", len(expired))
+		db.log.Info("ttl reaper: sweep complete", "reaped", len(expired))
 	}
 }

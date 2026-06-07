@@ -46,12 +46,12 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
-	"log"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/Ari-Ghosh/flash-db/src/logging"
 	"github.com/Ari-Ghosh/flash-db/src/wal"
 )
 
@@ -129,6 +129,7 @@ type Leader struct {
 	mu        sync.RWMutex
 	followers map[string]*followerConn // addr → conn
 	ring      *ringBuffer
+	log       *logging.Logger
 	stopCh    chan struct{}
 	wg        sync.WaitGroup
 }
@@ -143,6 +144,7 @@ func NewLeader(cfg Config) (*Leader, error) {
 		cfg:       cfg,
 		followers: make(map[string]*followerConn),
 		ring:      newRingBuffer(65536), // 64k record slots
+		log:       logging.New(logging.LevelInfo),
 		stopCh:    make(chan struct{}),
 	}, nil
 }
@@ -203,7 +205,7 @@ func (l *Leader) acceptLoop() {
 			case <-l.stopCh:
 				return
 			default:
-				log.Printf("replication: accept error: %v", err)
+				l.log.Error("replication: accept error", "error", err)
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
@@ -221,12 +223,12 @@ func (l *Leader) handleFollower(conn net.Conn) {
 		l.mu.Lock()
 		delete(l.followers, addr)
 		l.mu.Unlock()
-		log.Printf("replication: follower %s disconnected", addr)
+		l.log.Info("replication: follower disconnected", "addr", addr)
 	}()
 
 	// Auth: send challenge, verify HMAC response.
 	if err := l.authenticate(conn); err != nil {
-		log.Printf("replication: auth failed for %s: %v", addr, err)
+		l.log.Error("replication: auth failed", "addr", addr, "error", err)
 		return
 	}
 
@@ -248,7 +250,7 @@ func (l *Leader) handleFollower(conn net.Conn) {
 	l.mu.Lock()
 	l.followers[addr] = fc
 	l.mu.Unlock()
-	log.Printf("replication: follower %s connected (fromSeq=%d)", addr, fromSeq)
+	l.log.Info("replication: follower connected", "addr", addr, "fromSeq", fromSeq)
 
 	// Stream records.
 	for {
@@ -303,6 +305,7 @@ func (l *Leader) authenticate(conn net.Conn) error {
 type Follower struct {
 	cfg       Config
 	applier   Applier
+	log       *logging.Logger
 	stopCh    chan struct{}
 	wg        sync.WaitGroup
 	lastSeq   atomic.Uint64
@@ -318,6 +321,7 @@ func NewFollower(cfg Config, applier Applier) (*Follower, error) {
 	f := &Follower{
 		cfg:     cfg,
 		applier: applier,
+		log:     logging.New(logging.LevelInfo),
 		stopCh:  make(chan struct{}),
 	}
 	f.lastSeq.Store(applier.LastAppliedSeq())
@@ -351,7 +355,7 @@ func (f *Follower) loop() {
 		default:
 		}
 		if err := f.runOnce(); err != nil {
-			log.Printf("replication follower: %v — reconnecting in %v", err, f.cfg.ReconnectInterval)
+			f.log.Warn("replication follower: reconnecting", "error", err, "interval", f.cfg.ReconnectInterval)
 			f.connected.Store(false)
 			select {
 			case <-f.stopCh:
@@ -406,7 +410,7 @@ func (f *Follower) authenticateAndHandshake(conn net.Conn) error {
 
 	_ = conn.SetDeadline(time.Time{})
 	f.connected.Store(true)
-	log.Printf("replication follower: connected to %s (fromSeq=%d)", f.cfg.LeaderAddr, f.lastSeq.Load())
+	f.log.Info("replication follower: connected", "leader", f.cfg.LeaderAddr, "fromSeq", f.lastSeq.Load())
 	return nil
 }
 

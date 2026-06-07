@@ -61,12 +61,13 @@ import (
 	"bytes"
 	"container/heap"
 	"fmt"
-	"log"
 	"os"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/Ari-Ghosh/flash-db/src/btree"
+	"github.com/Ari-Ghosh/flash-db/src/logging"
 	"github.com/Ari-Ghosh/flash-db/src/sstable"
 	types "github.com/Ari-Ghosh/flash-db/src/types"
 )
@@ -106,29 +107,39 @@ type Engine struct {
 	l2Tree   *btree.BTree
 	snapProv SnapshotProvider
 	bloomTC  BloomTelemetryCleaner // may be nil
+	log      *logging.Logger
 
 	mu      sync.Mutex
-	trigCh  chan struct{} // signals the worker there is work
-	pending [][]string    // queued L0 file batches
+	trigCh  chan struct{}       // signals the worker there is work
+	pending *compactionQueue    // priority-ordered compaction jobs
 	quitCh  chan struct{}
 	doneCh  chan struct{}
+
+	// Backpressure state.
+	bytesWritten  atomic.Uint64
+	bytesCompacted atomic.Uint64
+	stallCond     *sync.Cond
 
 	l0MergeCount atomic.Uint64
 	l1MergeCount atomic.Uint64
 }
 
 // New creates a compaction engine.
-func New(cfg Config, l1Tree, l2Tree *btree.BTree, sp SnapshotProvider, btc BloomTelemetryCleaner) *Engine {
-	return &Engine{
+func New(cfg Config, l1Tree, l2Tree *btree.BTree, sp SnapshotProvider, btc BloomTelemetryCleaner, log *logging.Logger) *Engine {
+	e := &Engine{
 		cfg:      cfg,
 		l1Tree:   l1Tree,
 		l2Tree:   l2Tree,
 		snapProv: sp,
 		bloomTC:  btc,
+		log:      log,
+		pending:  newCompactionQueue(),
 		trigCh:   make(chan struct{}, 1),
 		quitCh:   make(chan struct{}),
 		doneCh:   make(chan struct{}),
 	}
+	e.stallCond = sync.NewCond(&e.mu)
+	return e
 }
 
 // Start launches the background compaction goroutine.
@@ -144,12 +155,48 @@ func (e *Engine) Stop() {
 // Unlike v1, this never silently drops a trigger.
 func (e *Engine) Trigger(paths []string) {
 	e.mu.Lock()
-	e.pending = append(e.pending, paths)
+	e.pending.push(&compactionJob{kind: jobL0Merge, l0Paths: paths, priority: 100, enqueued: time.Now()})
 	e.mu.Unlock()
 	select {
 	case e.trigCh <- struct{}{}:
 	default:
 	}
+}
+
+// BackpressureLevel returns 0=none, 1=soft, 2=hard based on compaction debt.
+func (e *Engine) BackpressureLevel() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	pending := e.pending.len()
+	if pending > 16 {
+		return 2
+	}
+	if pending > 8 {
+		return 1
+	}
+	return 0
+}
+
+// Stall blocks until the compaction backlog is cleared or timeout elapses.
+func (e *Engine) Stall(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	e.mu.Lock()
+	for e.pending.len() > 16 {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			e.mu.Unlock()
+			return fmt.Errorf("compaction stall timeout")
+		}
+		done := make(chan struct{})
+		go func() {
+			time.Sleep(remaining)
+			close(done)
+			e.stallCond.Broadcast()
+		}()
+		e.stallCond.Wait()
+	}
+	e.mu.Unlock()
+	return nil
 }
 
 func (e *Engine) run() {
@@ -168,16 +215,17 @@ func (e *Engine) run() {
 func (e *Engine) drainPending() {
 	for {
 		e.mu.Lock()
-		if len(e.pending) == 0 {
-			e.mu.Unlock()
+		job := e.pending.pop()
+		e.mu.Unlock()
+		if job == nil {
+			e.stallCond.Broadcast()
 			return
 		}
-		batch := e.pending[0]
-		e.pending = e.pending[1:]
-		e.mu.Unlock()
-
-		if err := e.compactL0(batch); err != nil {
-			log.Printf("compaction L0 error: %v", err)
+		// Age-based priority boost
+		age := time.Since(job.enqueued).Seconds()
+		job.priority += int(age)
+		if err := e.compactL0(job.l0Paths); err != nil {
+			e.log.Error("compaction L0 error", "error", err)
 		}
 	}
 }
@@ -221,13 +269,13 @@ func (e *Engine) compactL0(paths []string) error {
 
 	for _, p := range paths {
 		if err := os.Remove(p); err != nil {
-			log.Printf("compaction: remove %s: %v", p, err)
+			e.log.Error("compaction: remove SSTable", "path", p, "error", err)
 		}
 		if e.bloomTC != nil {
 			e.bloomTC.Remove(p)
 		}
 	}
-	log.Printf("compaction: merged %d L0 SSTables → L1 (streaming)", len(paths))
+	e.log.Info("compaction: merged L0 SSTables into L1 (streaming)", "files", len(paths))
 	e.l0MergeCount.Add(1)
 
 	if e.l2Tree != nil {
@@ -252,11 +300,11 @@ func (e *Engine) maybeCompactL1toL2() {
 		return
 	}
 
-	log.Printf("compaction: L1→L2 triggered (approx %d bytes)", approxSize)
+	e.log.Info("compaction: L1→L2 triggered", "approxBytes", approxSize)
 
 	l2Entries, err := e.l2Tree.AllEntries()
 	if err != nil {
-		log.Printf("compaction L1→L2 read L2: %v", err)
+		e.log.Error("compaction L1→L2 read L2", "error", err)
 		return
 	}
 
@@ -264,16 +312,16 @@ func (e *Engine) maybeCompactL1toL2() {
 	combined := mergeTwo(l2Entries, l1Entries, oldest)
 
 	if err := e.l2Tree.BulkLoad(combined); err != nil {
-		log.Printf("compaction L1→L2 bulk-load: %v", err)
+		e.log.Error("compaction L1→L2 bulk-load", "error", err)
 		return
 	}
 
 	// Clear L1 — all data is now in L2.
 	if err := e.l1Tree.BulkLoad(nil); err != nil {
-		log.Printf("compaction L1 clear: %v", err)
+		e.log.Error("compaction L1 clear", "error", err)
 	}
 
-	log.Printf("compaction: L1→L2 complete (%d entries in L2)", len(combined))
+	e.log.Info("compaction: L1→L2 complete", "entries", len(combined))
 	e.l1MergeCount.Add(1)
 }
 
@@ -503,3 +551,72 @@ func (it *chanIter) SeqNum() uint64    { return it.cur.SeqNum }
 func (it *chanIter) IsTombstone() bool { return it.cur.Tombstone }
 func (it *chanIter) Error() error      { return it.err }
 func (it *chanIter) Close() error      { return nil }
+
+
+// ── Compaction priority queue ───────────────────────────────────────────────
+
+type jobKind int
+
+const (
+	jobL0Merge jobKind = iota
+	jobL1Merge
+)
+
+type compactionJob struct {
+	kind     jobKind
+	l0Paths  []string
+	priority int
+	enqueued time.Time
+}
+
+type compactionQueue struct {
+	jobs []*compactionJob
+}
+
+func newCompactionQueue() *compactionQueue {
+	return &compactionQueue{}
+}
+
+func (q *compactionQueue) len() int { return len(q.jobs) }
+
+func (q *compactionQueue) push(j *compactionJob) {
+	q.jobs = append(q.jobs, j)
+	// Sift up by priority (max-heap)
+	i := len(q.jobs) - 1
+	for i > 0 {
+		p := (i - 1) / 2
+		if q.jobs[p].priority >= q.jobs[i].priority {
+			break
+		}
+		q.jobs[p], q.jobs[i] = q.jobs[i], q.jobs[p]
+		i = p
+	}
+}
+
+func (q *compactionQueue) pop() *compactionJob {
+	if len(q.jobs) == 0 {
+		return nil
+	}
+	root := q.jobs[0]
+	q.jobs[0] = q.jobs[len(q.jobs)-1]
+	q.jobs = q.jobs[:len(q.jobs)-1]
+	// Sift down
+	i := 0
+	for {
+		largest := i
+		l := 2*i + 1
+		r := 2*i + 2
+		if l < len(q.jobs) && q.jobs[l].priority > q.jobs[largest].priority {
+			largest = l
+		}
+		if r < len(q.jobs) && q.jobs[r].priority > q.jobs[largest].priority {
+			largest = r
+		}
+		if largest == i {
+			break
+		}
+		q.jobs[i], q.jobs[largest] = q.jobs[largest], q.jobs[i]
+		i = largest
+	}
+	return root
+}

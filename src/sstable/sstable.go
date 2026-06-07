@@ -73,6 +73,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/Ari-Ghosh/flash-db/src/backend"
 	"github.com/Ari-Ghosh/flash-db/src/bloom"
 	types "github.com/Ari-Ghosh/flash-db/src/types"
 )
@@ -105,7 +106,7 @@ type Metadata struct {
 
 // Writer builds an SSTable from a sorted stream of entries.
 type Writer struct {
-	f      *os.File
+	f      backend.File
 	bw     *bufio.Writer
 	index  []IndexEntry
 	bloom  *bloom.Filter
@@ -131,6 +132,28 @@ func NewWriterWithCodec(path string, expectedEntries uint, comp types.Compressor
 	return NewWriterWithCodecAndFPR(path, expectedEntries, comp, 0.01)
 }
 
+
+// NewWriterWithFS opens path for writing using the given filesystem backend.
+func NewWriterWithFS(fs backend.FS, path string, expectedEntries uint, comp types.Compressor, fpr float64) (*Writer, error) {
+	f, err := fs.Create(path)
+	if err != nil {
+		return nil, fmt.Errorf("sstable writer: %w", err)
+	}
+	n := expectedEntries
+	if n < 100 {
+		n = 100
+	}
+	if fpr <= 0 || fpr >= 1 {
+		fpr = 0.01
+	}
+	return &Writer{
+		f:     f,
+		bw:    bufio.NewWriterSize(f, 256*1024),
+		bloom: bloom.New(n, fpr),
+		comp:  comp,
+		codec: comp.Codec(),
+	}, nil
+}
 // NewWriterWithCodecAndFPR opens path for writing using the given compressor
 // and a custom bloom filter false-positive rate.
 func NewWriterWithCodecAndFPR(path string, expectedEntries uint, comp types.Compressor, fpr float64) (*Writer, error) {

@@ -83,6 +83,8 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/Ari-Ghosh/flash-db/src/backend"
+
 	"github.com/Ari-Ghosh/flash-db/src/arc"
 	types "github.com/Ari-Ghosh/flash-db/src/types"
 )
@@ -126,7 +128,8 @@ type page struct {
 // BTree manages a B+ tree stored in a single file.
 type BTree struct {
 	mu        sync.RWMutex
-	f         *os.File
+	f         backend.File
+	fs        backend.FS
 	rootID    uint64
 	pageCount uint64
 	cache     *arc.Cache[*page] // ARC page cache (replaces the old unbounded map)
@@ -149,6 +152,37 @@ func OpenWithCompressor(path string, comp types.Compressor) (*BTree, error) {
 	return OpenWithCompressorAndCache(path, comp, DefaultCachePages)
 }
 
+
+// OpenWithFS opens or creates a B-tree file using the given filesystem backend.
+func OpenWithFS(fs backend.FS, path string, comp types.Compressor, cachePages int) (*BTree, error) {
+	f, err := fs.OpenReadWrite(path)
+	if err != nil {
+		return nil, fmt.Errorf("btree open: %w", err)
+	}
+	bt := &BTree{
+		f:      f,
+		fs:     fs,
+		rootID: nullPage,
+		cache:  arc.New[*page](cachePages),
+		comp:   comp,
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if fi.Size() > 0 {
+		if err := bt.loadHeader(); err != nil {
+			return nil, err
+		}
+	} else {
+		root := &page{pageType: typeLeaf, rightmost: nullPage, dirty: true}
+		bt.rootID = bt.allocPage(root)
+		if err := bt.saveHeader(); err != nil {
+			return nil, err
+		}
+	}
+	return bt, nil
+}
 // OpenWithCompressorAndCache opens or creates a B-tree file with given compressor and cache size.
 func OpenWithCompressorAndCache(path string, comp types.Compressor, cachePages int) (*BTree, error) {
 	f, err := os.OpenFile(filepath.Clean(path), os.O_CREATE|os.O_RDWR, 0o600)

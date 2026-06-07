@@ -8,6 +8,7 @@ import (
 
 	"github.com/Ari-Ghosh/flash-db/src/btree"
 	"github.com/Ari-Ghosh/flash-db/src/compaction"
+	"github.com/Ari-Ghosh/flash-db/src/logging"
 	"github.com/Ari-Ghosh/flash-db/src/sstable"
 	types "github.com/Ari-Ghosh/flash-db/src/types"
 )
@@ -102,7 +103,7 @@ func TestCompactionMergeTwo(t *testing.T) {
 	eng := compaction.New(compaction.Config{
 		L0Threshold:     2,
 		L1SizeThreshold: 1024 * 1024 * 1024,
-	}, l1Tree, l2Tree, tracker, nil)
+	}, l1Tree, l2Tree, tracker, nil, logging.New(logging.LevelInfo))
 	eng.Start()
 	eng.Trigger([]string{path1, path2})
 	time.Sleep(200 * time.Millisecond)

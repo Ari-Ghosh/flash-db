@@ -582,12 +582,12 @@ cfg.BloomFPRMax    = 0.05   // never go above 5%  (smaller filter)
 - [x] Read-your-writes consistency guarantee for followers
 - [x] Distributed query fan-out across followers
 - [ ] CLI and REPL tool
-- [ ] Structured logging with `slog`
-- [ ] Pluggable storage backend
-- [ ] Write stall and backpressure
-- [ ] Schema registry and value codec
-- [ ] Compaction priority queue
-- [ ] Chaos / fault-injection testing harness
+- [x] Structured logging with `slog`
+- [x] Pluggable storage backend
+- [x] Write stall and backpressure
+- [x] Schema registry and value codec
+- [x] Compaction priority queue
+- [x] Chaos / fault-injection testing harness
 - [ ] OpenTelemetry trace spans
 - [ ] Automatic leader election (Raft)
 

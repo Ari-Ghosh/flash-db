@@ -99,6 +99,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Ari-Ghosh/flash-db/src/backend"
 )
 
 // record kinds.
@@ -142,7 +144,8 @@ type batchEntry struct {
 // WAL wraps an append-only log file.
 type WAL struct {
 	mu     sync.Mutex
-	f      *os.File
+	f      backend.File
+	fs     backend.FS
 	bw     *bufio.Writer
 	path   string
 	policy SyncPolicy
@@ -166,6 +169,31 @@ func defaultOptions() Options {
 	return Options{SyncPolicy: SyncBatch, BatchInterval: time.Millisecond}
 }
 
+
+// OpenWithFS opens a WAL at path using the given filesystem backend.
+func OpenWithFS(fs backend.FS, path string, opts Options) (*WAL, error) {
+	f, err := fs.OpenAppend(path)
+	if err != nil {
+		return nil, fmt.Errorf("wal open %s: %w", path, err)
+	}
+	if opts.BatchInterval == 0 {
+		opts.BatchInterval = time.Millisecond
+	}
+	w := &WAL{
+		f:       f,
+		fs:      fs,
+		bw:      bufio.NewWriterSize(f, 512*1024),
+		path:    path,
+		policy:  opts.SyncPolicy,
+		flushCh: make(chan struct{}, 1),
+		stopCh:  make(chan struct{}),
+	}
+	if opts.SyncPolicy == SyncBatch {
+		w.wg.Add(1)
+		go w.batchFlusher(opts.BatchInterval)
+	}
+	return w, nil
+}
 // Open opens or creates the WAL at path with default options.
 func Open(path string) (*WAL, error) {
 	return OpenWithOptions(path, defaultOptions())
@@ -532,6 +560,9 @@ func (w *WAL) Delete() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	_ = w.f.Close()
+	if w.fs != nil {
+		return w.fs.Remove(w.path)
+	}
 	return os.Remove(w.path)
 }
 

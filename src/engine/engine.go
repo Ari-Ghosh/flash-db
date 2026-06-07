@@ -104,7 +104,6 @@ package engine
 import (
 	"bytes"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -112,10 +111,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Ari-Ghosh/flash-db/src/backend"
 	"github.com/Ari-Ghosh/flash-db/src/backup"
 	"github.com/Ari-Ghosh/flash-db/src/bloom"
 	"github.com/Ari-Ghosh/flash-db/src/btree"
 	"github.com/Ari-Ghosh/flash-db/src/compaction"
+	"github.com/Ari-Ghosh/flash-db/src/logging"
 	"github.com/Ari-Ghosh/flash-db/src/memtable"
 	"github.com/Ari-Ghosh/flash-db/src/replication"
 	"github.com/Ari-Ghosh/flash-db/src/sstable"
@@ -132,6 +133,8 @@ type Config struct {
 	L1SizeThreshold    int64
 	WALSyncPolicy      wal.SyncPolicy
 	Codec              types.Codec
+	// Logger for structured logging.  Defaults to JSON at Info level.
+	Logger *logging.Logger
 	// Bloom filter adaptive sizing.  The engine tracks false-positive rates
 	// per SSTable and adjusts the FPR target for newly flushed SSTables.
 	BloomFPRTarget float64 // baseline FPR (default 0.01 = 1%)
@@ -140,7 +143,29 @@ type Config struct {
 	// Replication is optional.  When non-nil, the engine registers writes
 	// with the leader for fanout to followers.
 	Replication *replication.Config
+	// FS is the pluggable filesystem backend.  Defaults to OSFS (local disk).
+	FS backend.FS
+	// WriteStall configures backpressure behavior during heavy write loads.
+	WriteStall WriteStallConfig
 }
+
+// WriteStallConfig controls backpressure during heavy write loads.
+type WriteStallConfig struct {
+	// L0SoftLimit is the L0 file count at which writes are slowed.
+	// Default: 8.
+	L0SoftLimit int
+	// L0HardLimit is the L0 file count at which writes are blocked.
+	// Default: 16.
+	L0HardLimit int
+	// StallTimeout is how long a writer waits before returning ErrWriteStall.
+	// Default: 10s.
+	StallTimeout time.Duration
+}
+
+var (
+	// ErrWriteStall is returned when a write is stalled for too long.
+	ErrWriteStall = fmt.Errorf("engine: write stalled")
+)
 
 // DefaultConfig returns production-sensible defaults.
 func DefaultConfig(dir string) Config {
@@ -151,9 +176,16 @@ func DefaultConfig(dir string) Config {
 		L1SizeThreshold:    256 * 1024 * 1024,
 		WALSyncPolicy:      wal.SyncBatch,
 		Codec:              types.CodecNone,
+		Logger:             logging.New(logging.LevelInfo),
 		BloomFPRTarget:     0.01,
 		BloomFPRMin:        0.001,
 		BloomFPRMax:        0.05,
+		FS:                 &backend.OSFS{},
+		WriteStall: WriteStallConfig{
+			L0SoftLimit:  8,
+			L0HardLimit:  16,
+			StallTimeout: 10 * time.Second,
+		},
 	}
 }
 
@@ -166,6 +198,9 @@ type DB struct {
 	txnSeq   atomic.Uint64 // monotonic transaction ID counter
 	memtable *memtable.MemTable
 	imm      *memtable.MemTable
+
+	// Structured logger.
+	log *logging.Logger
 
 	// Column family registry (loaded at Open, persisted on CreateColumnFamily).
 	cfReg *cfRegistry
@@ -238,6 +273,12 @@ func Open(cfg Config) (*DB, error) {
 		return nil, fmt.Errorf("engine: wal: %w", err)
 	}
 
+	// Use provided logger or default to Info-level JSON logger.
+	log := cfg.Logger
+	if log == nil {
+		log = logging.New(logging.LevelInfo)
+	}
+
 	snapTrack := types.NewSnapshotTracker()
 	bt := bloom.NewBloomTelemetry()
 	db := &DB{
@@ -252,13 +293,14 @@ func Open(cfg Config) (*DB, error) {
 		flushDone:      make(chan struct{}, 1),
 		cfReg:          newCFRegistry(),
 		idxMgr:         newIndexManager(),
+		log:            log,
 	}
 
 	compCfg := compaction.Config{
 		L0Threshold:     cfg.L0CompactThreshold,
 		L1SizeThreshold: cfg.L1SizeThreshold,
 	}
-	db.compactor = compaction.New(compCfg, l1Tree, l2Tree, snapTrack, bt)
+	db.compactor = compaction.New(compCfg, l1Tree, l2Tree, snapTrack, bt, log.With("subsystem", "compaction"))
 	db.compactor.Start()
 
 	if err := db.replayWAL(w); err != nil {
@@ -295,7 +337,7 @@ func (db *DB) startReplication(cfg *replication.Config) error {
 			return err
 		}
 		db.leader = l
-		log.Printf("replication: leader listening on %s", cfg.ListenAddr)
+		db.log.Info("replication: leader listening", "addr", cfg.ListenAddr)
 	case "follower":
 		f, err := replication.NewFollower(*cfg, db)
 		if err != nil {
@@ -303,7 +345,7 @@ func (db *DB) startReplication(cfg *replication.Config) error {
 		}
 		f.Start()
 		db.follower = f
-		log.Printf("replication: follower connecting to %s", cfg.LeaderAddr)
+		db.log.Info("replication: follower connecting", "addr", cfg.LeaderAddr)
 	default:
 		return fmt.Errorf("unknown replication role %q", cfg.Role) //nolint:err113 // no error to wrap
 	}
@@ -886,7 +928,7 @@ func (db *DB) triggerFlush() error {
 	go func() {
 		if err := db.flushImmutable(); err != nil {
 			db.bgErr.Store(err)
-			log.Printf("engine: flush error: %v", err)
+			db.log.Error("engine: flush error", "error", err)
 		}
 		select {
 		case db.flushDone <- struct{}{}:
@@ -982,7 +1024,7 @@ func (db *DB) rotateWAL() {
 	newPath := filepath.Join(db.cfg.Dir, fmt.Sprintf("wal_%d.log", db.seq.Load()))
 	newWAL, err := wal.OpenWithOptions(newPath, wal.Options{SyncPolicy: db.cfg.WALSyncPolicy})
 	if err != nil {
-		log.Printf("engine: WAL rotate error: %v", err)
+		db.log.Error("engine: WAL rotate error", "error", err)
 		return
 	}
 	db.walActive = newWAL
