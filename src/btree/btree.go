@@ -152,7 +152,6 @@ func OpenWithCompressor(path string, comp types.Compressor) (*BTree, error) {
 	return OpenWithCompressorAndCache(path, comp, DefaultCachePages)
 }
 
-
 // OpenWithFS opens or creates a B-tree file using the given filesystem backend.
 func OpenWithFS(fs backend.FS, path string, comp types.Compressor, cachePages int) (*BTree, error) {
 	f, err := fs.OpenReadWrite(path)
@@ -183,6 +182,7 @@ func OpenWithFS(fs backend.FS, path string, comp types.Compressor, cachePages in
 	}
 	return bt, nil
 }
+
 // OpenWithCompressorAndCache opens or creates a B-tree file with given compressor and cache size.
 func OpenWithCompressorAndCache(path string, comp types.Compressor, cachePages int) (*BTree, error) {
 	f, err := os.OpenFile(filepath.Clean(path), os.O_CREATE|os.O_RDWR, 0o600)

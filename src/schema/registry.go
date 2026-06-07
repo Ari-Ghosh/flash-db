@@ -7,9 +7,9 @@ import (
 
 // MapRegistry is an in-memory schema Registry backed by a map.
 type MapRegistry struct {
-	mu       sync.RWMutex
-	schemas  map[string]map[uint32]Codec // name → version → codec
-	latest   map[string]uint32           // name → latest version
+	mu      sync.RWMutex
+	schemas map[string]map[uint32]Codec // name → version → codec
+	latest  map[string]uint32           // name → latest version
 }
 
 // NewMapRegistry creates an empty in-memory schema registry.

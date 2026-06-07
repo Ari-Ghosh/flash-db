@@ -32,6 +32,6 @@ type FS interface {
 	OpenAppend(path string) (File, error)
 	Remove(path string) error
 	MkdirAll(path string, perm os.FileMode) error
-	Rename(old, new string) error
+	Rename(old, newname string) error
 	List(pattern string) ([]string, error)
 }

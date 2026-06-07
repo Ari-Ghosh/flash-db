@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/Ari-Ghosh/flash-db/src/backend"
@@ -35,7 +34,6 @@ type Config struct {
 type FaultFS struct {
 	inner backend.FS
 	cfg   Config
-	mu    sync.Mutex
 	rng   *rand.Rand
 }
 
@@ -53,22 +51,6 @@ func (f *FaultFS) maybeFail() error {
 		return fmt.Errorf("faultfs: injected I/O failure")
 	}
 	return nil
-}
-
-func (f *FaultFS) maybeSlow() {
-	if f.cfg.SlowIOSleep > 0 {
-		time.Sleep(f.cfg.SlowIOSleep)
-	}
-}
-
-func (f *FaultFS) corrupt(p []byte) {
-	if f.cfg.CorruptWriteRate > 0 && len(p) > 0 {
-		for i := range p {
-			if f.rng.Float64() < f.cfg.CorruptWriteRate {
-				p[i] ^= 0xFF
-			}
-		}
-	}
 }
 
 func (f *FaultFS) OpenRead(path string) (backend.File, error) {
@@ -129,11 +111,11 @@ func (f *FaultFS) MkdirAll(path string, perm os.FileMode) error {
 	return f.inner.MkdirAll(path, perm)
 }
 
-func (f *FaultFS) Rename(old, new string) error {
+func (f *FaultFS) Rename(old, newname string) error {
 	if err := f.maybeFail(); err != nil {
 		return err
 	}
-	return f.inner.Rename(old, new)
+	return f.inner.Rename(old, newname)
 }
 
 func (f *FaultFS) List(pattern string) ([]string, error) {

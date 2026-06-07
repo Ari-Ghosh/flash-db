@@ -40,6 +40,8 @@ func slogLevel(l Level) slog.Level {
 	switch l {
 	case LevelDebug:
 		return slog.LevelDebug
+	case LevelInfo:
+		return slog.LevelInfo
 	case LevelWarn:
 		return slog.LevelWarn
 	case LevelError:

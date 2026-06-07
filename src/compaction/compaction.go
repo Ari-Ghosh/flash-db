@@ -110,15 +110,13 @@ type Engine struct {
 	log      *logging.Logger
 
 	mu      sync.Mutex
-	trigCh  chan struct{}       // signals the worker there is work
-	pending *compactionQueue    // priority-ordered compaction jobs
+	trigCh  chan struct{}    // signals the worker there is work
+	pending *compactionQueue // priority-ordered compaction jobs
 	quitCh  chan struct{}
 	doneCh  chan struct{}
 
 	// Backpressure state.
-	bytesWritten  atomic.Uint64
-	bytesCompacted atomic.Uint64
-	stallCond     *sync.Cond
+	stallCond *sync.Cond
 
 	l0MergeCount atomic.Uint64
 	l1MergeCount atomic.Uint64
@@ -551,7 +549,6 @@ func (it *chanIter) SeqNum() uint64    { return it.cur.SeqNum }
 func (it *chanIter) IsTombstone() bool { return it.cur.Tombstone }
 func (it *chanIter) Error() error      { return it.err }
 func (it *chanIter) Close() error      { return nil }
-
 
 // ── Compaction priority queue ───────────────────────────────────────────────
 

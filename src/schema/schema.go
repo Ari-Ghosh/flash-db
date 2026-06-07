@@ -13,11 +13,11 @@ import (
 type FieldType uint8
 
 const (
-	FieldInt64  FieldType = 1
+	FieldInt64   FieldType = 1
 	FieldFloat64 FieldType = 2
-	FieldString FieldType = 3
-	FieldBytes  FieldType = 4
-	FieldBool   FieldType = 5
+	FieldString  FieldType = 3
+	FieldBytes   FieldType = 4
+	FieldBool    FieldType = 5
 )
 
 // FieldDef describes one field in a schema.
@@ -51,8 +51,8 @@ type Registry interface {
 
 // Errors returned by the schema package.
 var (
-	ErrSchemaNotFound     = fmt.Errorf("schema: not found")
+	ErrSchemaNotFound        = fmt.Errorf("schema: not found")
 	ErrSchemaVersionNotFound = fmt.Errorf("schema: version not found")
-	ErrSchemaExists       = fmt.Errorf("schema: already registered")
-	ErrInvalidType        = fmt.Errorf("schema: invalid field type")
+	ErrSchemaExists          = fmt.Errorf("schema: already registered")
+	ErrInvalidType           = fmt.Errorf("schema: invalid field type")
 )

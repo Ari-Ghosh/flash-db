@@ -196,23 +196,24 @@ func (m *MemFS) MkdirAll(path string, _ os.FileMode) error {
 	return nil
 }
 
-func (m *MemFS) Rename(old, new string) error {
+func (m *MemFS) Rename(old, newname string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	data, ok := m.files[old]
 	if !ok {
 		return fmt.Errorf("memfs: rename %s: %w", old, os.ErrNotExist)
 	}
-	m.files[new] = data
+	m.files[newname] = data
 	delete(m.files, old)
 	return nil
 }
 
 func (m *MemFS) List(pattern string) ([]string, error) {
-	if !strings.Contains(pattern, "*") {
+	idx := strings.Index(pattern, "*")
+	if idx < 0 {
 		return nil, errors.New("memfs: List only supports glob patterns")
 	}
-	prefix := pattern[:strings.Index(pattern, "*")]
+	prefix := pattern[:idx]
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	var matches []string

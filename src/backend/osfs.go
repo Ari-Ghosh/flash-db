@@ -12,14 +12,14 @@ type osFile struct {
 	f *os.File
 }
 
-func (o *osFile) Read(p []byte) (int, error)             { return o.f.Read(p) }
-func (o *osFile) Write(p []byte) (int, error)            { return o.f.Write(p) }
-func (o *osFile) ReadAt(p []byte, off int64) (int, error) { return o.f.ReadAt(p, off) }
-func (o *osFile) WriteAt(p []byte, off int64) (int, error) { return o.f.WriteAt(p, off) }
+func (o *osFile) Read(p []byte) (int, error)                   { return o.f.Read(p) }
+func (o *osFile) Write(p []byte) (int, error)                  { return o.f.Write(p) }
+func (o *osFile) ReadAt(p []byte, off int64) (int, error)      { return o.f.ReadAt(p, off) }
+func (o *osFile) WriteAt(p []byte, off int64) (int, error)     { return o.f.WriteAt(p, off) }
 func (o *osFile) Seek(offset int64, whence int) (int64, error) { return o.f.Seek(offset, whence) }
-func (o *osFile) Close() error                           { return o.f.Close() }
-func (o *osFile) Sync() error                            { return o.f.Sync() }
-func (o *osFile) Stat() (os.FileInfo, error)             { return o.f.Stat() }
+func (o *osFile) Close() error                                 { return o.f.Close() }
+func (o *osFile) Sync() error                                  { return o.f.Sync() }
+func (o *osFile) Stat() (os.FileInfo, error)                   { return o.f.Stat() }
 
 // OSFS implements FS using the local operating system.
 type OSFS struct{}
@@ -64,8 +64,8 @@ func (OSFS) MkdirAll(path string, perm os.FileMode) error {
 	return os.MkdirAll(filepath.Clean(path), perm)
 }
 
-func (OSFS) Rename(old, new string) error {
-	return os.Rename(filepath.Clean(old), filepath.Clean(new))
+func (OSFS) Rename(old, newname string) error {
+	return os.Rename(filepath.Clean(old), filepath.Clean(newname))
 }
 
 func (OSFS) List(pattern string) ([]string, error) {
@@ -85,6 +85,6 @@ func ReadFile(fs FS, path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return io.ReadAll(f)
 }

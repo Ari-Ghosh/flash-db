@@ -132,7 +132,6 @@ func NewWriterWithCodec(path string, expectedEntries uint, comp types.Compressor
 	return NewWriterWithCodecAndFPR(path, expectedEntries, comp, 0.01)
 }
 
-
 // NewWriterWithFS opens path for writing using the given filesystem backend.
 func NewWriterWithFS(fs backend.FS, path string, expectedEntries uint, comp types.Compressor, fpr float64) (*Writer, error) {
 	f, err := fs.Create(path)
@@ -154,6 +153,7 @@ func NewWriterWithFS(fs backend.FS, path string, expectedEntries uint, comp type
 		codec: comp.Codec(),
 	}, nil
 }
+
 // NewWriterWithCodecAndFPR opens path for writing using the given compressor
 // and a custom bloom filter false-positive rate.
 func NewWriterWithCodecAndFPR(path string, expectedEntries uint, comp types.Compressor, fpr float64) (*Writer, error) {

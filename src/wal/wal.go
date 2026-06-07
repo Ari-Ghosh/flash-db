@@ -169,7 +169,6 @@ func defaultOptions() Options {
 	return Options{SyncPolicy: SyncBatch, BatchInterval: time.Millisecond}
 }
 
-
 // OpenWithFS opens a WAL at path using the given filesystem backend.
 func OpenWithFS(fs backend.FS, path string, opts Options) (*WAL, error) {
 	f, err := fs.OpenAppend(path)
@@ -194,6 +193,7 @@ func OpenWithFS(fs backend.FS, path string, opts Options) (*WAL, error) {
 	}
 	return w, nil
 }
+
 // Open opens or creates the WAL at path with default options.
 func Open(path string) (*WAL, error) {
 	return OpenWithOptions(path, defaultOptions())
