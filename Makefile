@@ -1,4 +1,4 @@
-.PHONY: help build run test test-coverage lint fmt clean docker-build docker-run setup
+.PHONY: help build run serve repl test test-coverage lint fmt clean docker-build docker-run setup
 
 # Variables
 BINARY_NAME=flashdb
@@ -17,25 +17,37 @@ setup: ## Install development dependencies
 	@go install golang.org/x/vuln/cmd/govulncheck@latest
 	@echo "Development dependencies installed"
 
-build: ## Build the application
+build: ## Build the flashdb CLI binary
 	@echo "Building $(BINARY_NAME)..."
-	@go build $(LDFLAGS) -o bin/$(BINARY_NAME) ./src
+	@go build $(LDFLAGS) -o bin/$(BINARY_NAME) ./cmd/flashdb
 
-run: build ## Build and run the application
-	@./bin/$(BINARY_NAME)
+run: build ## Build and run with default serve command
+	@echo "Starting flashDB server..."
+	@./bin/$(BINARY_NAME) serve --dir /tmp/flashdb
 
-test: ## Run tests
+serve: build ## Start flashDB server with options
+	@echo "Usage: ./bin/$(BINARY_NAME) serve --dir <path> --metrics-addr :9090 --otel-endpoint <url>"
+	@echo "       Use --raft-addr :6000 --node-id node1 for Raft cluster mode"
+
+repl: build ## Start interactive REPL
+	@echo "Starting flashDB REPL..."
+	@./bin/$(BINARY_NAME) repl --dir /tmp/flashdb
+
+test: ## Run tests (short mode by default, use TEST_FLAGS= for full suite)
 	@echo "Running tests..."
-	@go test -v -race -timeout 30s ./...
+	@go test -v -race -timeout 120s $(TEST_FLAGS) ./...
+
+test-short: ## Run tests (short mode)
+	@go test -short -timeout 60s ./...
 
 test-coverage: ## Run tests with coverage report
 	@echo "Running tests with coverage..."
-	@go test -v -race -timeout 30s -coverprofile=coverage.out ./...
+	@go test -v -race -timeout 120s -coverprofile=coverage.out ./...
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: coverage.html"
 
-test-short: ## Run tests (short mode)
-	@go test -short -timeout 10s ./...
+test-raft: ## Run Raft-specific tests only
+	@go test -v -timeout 60s -run TestRaft ./...
 
 lint: ## Run golangci-lint
 	@echo "Running linters..."
@@ -48,7 +60,7 @@ lint-fix: ## Run golangci-lint with fixes
 fmt: ## Format code
 	@echo "Formatting code..."
 	@go fmt ./...
-	@goimports -w ./src
+	@goimports -w ./src ./cmd
 
 vet: ## Run go vet
 	@echo "Running go vet..."

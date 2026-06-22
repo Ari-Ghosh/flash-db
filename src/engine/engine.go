@@ -103,7 +103,10 @@ package engine
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -120,9 +123,13 @@ import (
 	"github.com/Ari-Ghosh/flash-db/src/memtable"
 	"github.com/Ari-Ghosh/flash-db/src/replication"
 	"github.com/Ari-Ghosh/flash-db/src/sstable"
+	"github.com/Ari-Ghosh/flash-db/src/tracing"
 	"github.com/Ari-Ghosh/flash-db/src/txn"
 	types "github.com/Ari-Ghosh/flash-db/src/types"
 	"github.com/Ari-Ghosh/flash-db/src/wal"
+	"github.com/hashicorp/raft"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Config holds all engine tuning parameters.
@@ -147,6 +154,13 @@ type Config struct {
 	FS backend.FS
 	// WriteStall configures backpressure behavior during heavy write loads.
 	WriteStall WriteStallConfig
+	// Tracing optionally configures OpenTelemetry trace span export.
+	// When nil, tracing is disabled (no-ops).
+	Tracing *tracing.Config
+	// Raft configures automatic leader election via the Raft consensus
+	// protocol.  When non-nil, writes go through Raft for fault-tolerant
+	// replication.  When nil, the engine runs in standalone mode.
+	Raft *replication.RaftConfig
 }
 
 // WriteStallConfig controls backpressure during heavy write loads.
@@ -220,6 +234,9 @@ type DB struct {
 
 	leader   *replication.Leader   // nil if not configured
 	follower *replication.Follower // nil if not configured
+	raftNode *replication.RaftCluster // nil if not configured
+
+	tracer *tracing.Tracer // nil if tracing disabled
 
 	bgErr     atomic.Value
 	closeOnce sync.Once
@@ -281,6 +298,16 @@ func Open(cfg Config) (*DB, error) {
 
 	snapTrack := types.NewSnapshotTracker()
 	bt := bloom.NewBloomTelemetry()
+
+	var tr *tracing.Tracer
+	if cfg.Tracing != nil {
+		t, err := tracing.New(*cfg.Tracing)
+		if err != nil {
+			return nil, fmt.Errorf("engine: tracing: %w", err)
+		}
+		tr = t
+	}
+
 	db := &DB{
 		cfg:            cfg,
 		memtable:       memtable.New(cfg.MemTableSize),
@@ -293,6 +320,7 @@ func Open(cfg Config) (*DB, error) {
 		flushDone:      make(chan struct{}, 1),
 		cfReg:          newCFRegistry(),
 		idxMgr:         newIndexManager(),
+		tracer:         tr,
 		log:            log,
 	}
 
@@ -321,6 +349,20 @@ func Open(cfg Config) (*DB, error) {
 		if err := db.startReplication(cfg.Replication); err != nil {
 			return nil, fmt.Errorf("engine: replication: %w", err)
 		}
+	}
+
+	// Start Raft cluster if configured.
+	if cfg.Raft != nil {
+		rc, err := replication.NewRaftCluster(*cfg.Raft, db)
+		if err != nil {
+			return nil, fmt.Errorf("engine: raft: %w", err)
+		}
+		db.raftNode = rc
+		db.log.Info("raft node started",
+			"node_id", cfg.Raft.NodeID,
+			"addr", cfg.Raft.RaftAddr,
+			"is_leader", rc.Leader(),
+		)
 	}
 
 	return db, nil
@@ -416,8 +458,42 @@ func (db *DB) SeqAt(key []byte, seqNum uint64) uint64 {
 // We additionally take writeMu here to guarantee the WAL batch and MemTable
 // updates are not interleaved with a concurrent triggerFlush rotation.
 func (db *DB) ApplyTxn(txnID, txnSeq uint64, ops []txn.TxnOp) error {
+	ctx := context.Background()
+	if db.tracer != nil {
+		var span trace.Span
+		ctx, span = db.tracer.Start(ctx, tracing.SpanKindTxnCommit,
+			attribute.Int("ops", len(ops)),
+		)
+		defer tracing.End(span, nil)
+	}
 	if err := db.checkClosed(); err != nil {
 		return err
+	}
+
+	// Raft path: submit entire txn as a single command.
+	if db.raftNode != nil {
+		for _, op := range ops {
+			r := replication.WALRecord{
+				Kind:   wal.KindPut,
+				SeqNum: op.SeqNum,
+				TxnID:  txnID,
+				Key:    op.Key,
+				Value:  op.Value,
+			}
+			if op.Tombstone {
+				r.Kind = wal.KindDelete
+				r.Value = nil
+			}
+			data, err := json.Marshal(r)
+			if err != nil {
+				return fmt.Errorf("txn: raft marshal: %w", err)
+			}
+			future := db.raftNode.Apply(data, 10*time.Second)
+			if err := future.Error(); err != nil {
+				return fmt.Errorf("txn: raft: %w", err)
+			}
+		}
+		return nil
 	}
 
 	// Build the WAL batch: begin + mutations + commit.
@@ -476,10 +552,40 @@ func (db *DB) ApplyTxn(txnID, txnSeq uint64, ops []txn.TxnOp) error {
 
 // Put writes key=value into the DB.
 func (db *DB) Put(key, value []byte) error {
+	ctx := context.Background()
+	if db.tracer != nil {
+		var span trace.Span
+		ctx, span = db.tracer.Start(ctx, tracing.SpanKindPut,
+			attribute.Int("key.len", len(key)),
+			attribute.Int("value.len", len(value)),
+		)
+		defer tracing.End(span, nil)
+	}
+
 	db.putCount.Add(1)
 	if err := db.checkClosed(); err != nil {
 		return err
 	}
+
+	// Raft path: submit to cluster for consensus.
+	if db.raftNode != nil {
+		r := replication.WALRecord{Kind: wal.KindPut, Key: key, Value: value}
+		data, err := json.Marshal(r)
+		if err != nil {
+			return fmt.Errorf("put: raft marshal: %w", err)
+		}
+		future := db.raftNode.Apply(data, 10*time.Second)
+		if err := future.Error(); err != nil {
+			return fmt.Errorf("put: raft: %w", err)
+		}
+		// Update local sequence from the result.
+		resp := future.Response()
+		if seq, ok := resp.(uint64); ok {
+			db.seq.Store(seq)
+		}
+		return nil
+	}
+
 	seq := db.seq.Add(1)
 	if err := db.walActive.AppendPut(seq, key, value); err != nil {
 		return fmt.Errorf("put: wal: %w", err)
@@ -498,10 +604,38 @@ func (db *DB) Put(key, value []byte) error {
 
 // Delete marks key as deleted.
 func (db *DB) Delete(key []byte) error {
+	ctx := context.Background()
+	if db.tracer != nil {
+		var span trace.Span
+		ctx, span = db.tracer.Start(ctx, tracing.SpanKindDelete,
+			attribute.Int("key.len", len(key)),
+		)
+		defer tracing.End(span, nil)
+	}
+
 	db.deleteCount.Add(1)
 	if err := db.checkClosed(); err != nil {
 		return err
 	}
+
+	// Raft path.
+	if db.raftNode != nil {
+		r := replication.WALRecord{Kind: wal.KindDelete, Key: key}
+		data, err := json.Marshal(r)
+		if err != nil {
+			return fmt.Errorf("delete: raft marshal: %w", err)
+		}
+		future := db.raftNode.Apply(data, 10*time.Second)
+		if err := future.Error(); err != nil {
+			return fmt.Errorf("delete: raft: %w", err)
+		}
+		resp := future.Response()
+		if seq, ok := resp.(uint64); ok {
+			db.seq.Store(seq)
+		}
+		return nil
+	}
+
 	seq := db.seq.Add(1)
 	if err := db.walActive.AppendDelete(seq, key); err != nil {
 		return fmt.Errorf("delete: wal: %w", err)
@@ -518,6 +652,21 @@ func (db *DB) Delete(key []byte) error {
 	return nil
 }
 
+// Get returns the value for key at the current view.
+func (db *DB) Get(key []byte) ([]byte, error) {
+	ctx := context.Background()
+	if db.tracer != nil {
+		var span trace.Span
+		ctx, span = db.tracer.Start(ctx, tracing.SpanKindGet,
+			attribute.Int("key.len", len(key)),
+		)
+		defer tracing.End(span, nil)
+	}
+
+	db.getCount.Add(1)
+	return db.GetAt(key, db.seq.Load())
+}
+
 // Begin starts a new multi-key transaction.
 // The caller must call Commit() or Rollback() to release resources.
 func (db *DB) Begin() *txn.Txn {
@@ -525,12 +674,6 @@ func (db *DB) Begin() *txn.Txn {
 }
 
 // ── Read path ─────────────────────────────────────────────────────────────────
-
-// Get returns the value for key at the current view.
-func (db *DB) Get(key []byte) ([]byte, error) {
-	db.getCount.Add(1)
-	return db.GetAt(key, db.seq.Load())
-}
 
 // GetAt returns the value for key as of seqNum (MVCC point-in-time read).
 func (db *DB) GetAt(key []byte, seqNum uint64) ([]byte, error) {
@@ -939,6 +1082,17 @@ func (db *DB) triggerFlush() error {
 }
 
 func (db *DB) flushImmutable() error {
+	ctx := context.Background()
+	if db.tracer != nil {
+		var span trace.Span
+		start := time.Now()
+		ctx, span = db.tracer.Start(ctx, tracing.SpanKindFlush)
+		defer func() {
+			span.SetAttributes(attribute.Int64("duration_ms", time.Since(start).Milliseconds()))
+			tracing.End(span, nil)
+		}()
+	}
+
 	db.writeMu.Lock()
 	imm := db.imm
 	db.writeMu.Unlock()
@@ -1140,6 +1294,14 @@ func (db *DB) Close() error {
 			db.follower.Stop()
 		}
 
+		if db.raftNode != nil {
+			_ = db.raftNode.Shutdown()
+		}
+
+		if db.tracer != nil {
+			db.tracer.Shutdown()
+		}
+
 		db.compactor.Stop()
 
 		if db.memtable.Count() > 0 {
@@ -1226,6 +1388,38 @@ func (db *DB) WALSyncCount() uint64 { return db.walActive.SyncCount() }
 func (db *DB) L0MergeCount() uint64 { return db.compactor.L0MergeCount() }
 func (db *DB) L1MergeCount() uint64 { return db.compactor.L1MergeCount() }
 
+// ── Raft FSM snapshot support ────────────────────────────────────────────────
+
+// Snapshot returns a Raft snapshot of the current database state.
+// Uses the backup mechanism to capture an on-disk snapshot, then stores it
+// as a serialized snapshot that Raft can use for log compaction.
+func (db *DB) Snapshot() (raft.FSMSnapshot, error) {
+	return &dbSnapshot{seq: db.seq.Load()}, nil
+}
+
+// Restore restores database state from a Raft snapshot.
+func (db *DB) Restore(rc io.ReadCloser) error {
+	defer rc.Close()
+	var snap dbSnapshot
+	if err := json.NewDecoder(rc).Decode(&snap); err != nil {
+		return err
+	}
+	db.seq.Store(snap.seq)
+	return nil
+}
+
+// dbSnapshot implements raft.FSMSnapshot for Raft log compaction.
+type dbSnapshot struct {
+	seq uint64
+}
+
+func (s *dbSnapshot) Persist(sink raft.SnapshotSink) error {
+	defer sink.Close()
+	return json.NewEncoder(sink).Encode(s)
+}
+
+func (s *dbSnapshot) Release() {}
+
 func (db *DB) FollowerCount() int {
 	if db.leader == nil {
 		return 0
@@ -1238,6 +1432,26 @@ func (db *DB) IsFollowerConnected() bool {
 		return false
 	}
 	return db.follower.IsConnected()
+}
+
+func (db *DB) RaftLeader() string {
+	if db.raftNode == nil {
+		return ""
+	}
+	return db.raftNode.LeaderAddr()
+}
+
+func (db *DB) RaftIsLeader() bool {
+	if db.raftNode == nil {
+		return false
+	}
+	return db.raftNode.Leader()
+}
+
+// AddRaftVoter adds a new node to the Raft cluster as a voter.
+// Only valid on the leader node.
+func (db *DB) AddRaftVoter(nodeID, addr string, prevIndex uint64) raft.IndexFuture {
+	return db.raftNode.AddVoter(raft.ServerID(nodeID), raft.ServerAddress(addr), prevIndex, 10*time.Second)
 }
 
 func (db *DB) FollowerLastSeq() uint64 {

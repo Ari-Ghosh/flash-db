@@ -1,7 +1,7 @@
 # FlashDB Documentation
 
-**Project Status:** v5 — Streaming compaction, filter pushdown, Prometheus metrics, read-your-writes, distributed query fan-out  
-**Last Updated:** June 2, 2026  
+**Project Status:** v4.1 — CLI/REPL, OpenTelemetry tracing, Raft consensus for automatic leader election  
+**Last Updated:** June 19, 2026  
 **Language:** Go 1.25.11
 
 Welcome to the FlashDB documentation. This guide provides a comprehensive overview of the FlashDB architecture, its components, and how to use it in your applications.
@@ -13,6 +13,7 @@ Welcome to the FlashDB documentation. This guide provides a comprehensive overvi
 1. [**Architecture Overview**](architecture/OVERVIEW.md)
    - [LSM Tree & Compaction](architecture/LSM_TREE.md)
    - [Distributed Replication](architecture/REPLICATION.md)
+   - [Raft Consensus & Leader Election](architecture/RAFT.md)
    - [Transactions & Concurrency](architecture/TRANSACTIONS.md)
 2. [**Component Details**](components/)
    - [MemTable (Skip List)](components/MEMTABLE.md)
@@ -27,11 +28,13 @@ Welcome to the FlashDB documentation. This guide provides a comprehensive overvi
    - [Key TTL (Expiration)](components/TTL.md)
    - [Secondary Indexes](components/SECONDARY_INDEX.md)
    - [Prometheus Metrics](components/METRICS.md)
+   - [OpenTelemetry Tracing](components/TRACING.md)
    - [Query Fan-Out](components/QUERY_FANOUT.md)
 3. [**User Guide**](user-guide/)
    - [Getting Started](user-guide/GETTING_STARTED.md)
    - [API Reference](user-guide/API_REFERENCE.md)
    - [Configuration](user-guide/CONFIGURATION.md)
+   - [CLI / REPL Reference](user-guide/CLI.md)
 4. [**Architecture Decision Records (ADRs)**](adr/)
    - [ADR 001: Hybrid LSM + B-Tree](adr/001-lsm-btree-hybrid.md)
    - [ADR 002: OCC for Transactions](adr/002-optimistic-concurrency-control.md)
@@ -40,6 +43,8 @@ Welcome to the FlashDB documentation. This guide provides a comprehensive overvi
    - [ADR 005: Adaptive Bloom Filters](adr/005-adaptive-bloom-filters.md)
    - [ADR 006: Internal Key Namespacing](adr/006-internal-key-namespacing.md)
    - [ADR 007: Five-Phase Feature Plan](adr/007-five-features-plan.md)
+   - [ADR 008: OpenTelemetry Tracing](adr/008-opentelemetry-tracing.md)
+   - [ADR 009: Raft Consensus](adr/009-raft-consensus.md)
 
 ---
 
@@ -51,11 +56,12 @@ FlashDB is a high-performance hybrid database engine combining **LSM (Log-Struct
 - **Fast Writes**: Sequential WAL appends and in-memory Skip List updates.
 - **Fast Reads**: Page-based B+ tree with Adaptive Replacement Cache (ARC).
 - **ACID Transactions**: Optimistic Concurrency Control (OCC) for multi-key operations.
-- **Scalability**: Single-leader replication with automatic catch-up.
+- **Scalability**: Raft consensus with automatic leader election or manual single-leader replication.
 - **Reliability**: Hot backups with SHA-256 integrity verification.
 - **Flexibility**: Column Families, Key TTL, and Secondary Indexes.
-- **Observability**: Prometheus metrics exporter for monitoring.
+- **Observability**: Prometheus metrics exporter and OpenTelemetry trace spans.
 - **Distributed Queries**: Fan-out queries across leader and followers.
+- **CLI & REPL**: Full command-line interface with interactive shell and server mode.
 - **Streaming Compaction**: Constant-memory compaction via incremental page flushing.
 - **Filter Pushdown**: Server-side predicate filtering in all storage layers.
 
