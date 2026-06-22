@@ -129,7 +129,6 @@ import (
 	"github.com/Ari-Ghosh/flash-db/src/wal"
 	"github.com/hashicorp/raft"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/trace"
 )
 
 // Config holds all engine tuning parameters.
@@ -232,8 +231,8 @@ type DB struct {
 	snapTrack      *types.SnapshotTracker
 	bloomTelemetry *bloom.BloomTelemetry
 
-	leader   *replication.Leader   // nil if not configured
-	follower *replication.Follower // nil if not configured
+	leader   *replication.Leader      // nil if not configured
+	follower *replication.Follower    // nil if not configured
 	raftNode *replication.RaftCluster // nil if not configured
 
 	tracer *tracing.Tracer // nil if tracing disabled
@@ -256,24 +255,7 @@ func Open(cfg Config) (*DB, error) {
 	if err := os.MkdirAll(cfg.Dir, 0o750); err != nil {
 		return nil, fmt.Errorf("engine open mkdir: %w", err)
 	}
-	if cfg.MemTableSize == 0 {
-		cfg.MemTableSize = 64 * 1024 * 1024
-	}
-	if cfg.L0CompactThreshold == 0 {
-		cfg.L0CompactThreshold = 4
-	}
-	if cfg.L1SizeThreshold == 0 {
-		cfg.L1SizeThreshold = 256 * 1024 * 1024
-	}
-	if cfg.BloomFPRTarget <= 0 {
-		cfg.BloomFPRTarget = 0.01
-	}
-	if cfg.BloomFPRMin <= 0 {
-		cfg.BloomFPRMin = 0.001
-	}
-	if cfg.BloomFPRMax <= 0 {
-		cfg.BloomFPRMax = 0.05
-	}
+	cfg.applyDefaults()
 
 	l1Tree, err := btree.OpenWithCompressor(filepath.Join(cfg.Dir, "btree_l1.db"), types.NewCompressor(types.CodecSnappy))
 	if err != nil {
@@ -458,10 +440,8 @@ func (db *DB) SeqAt(key []byte, seqNum uint64) uint64 {
 // We additionally take writeMu here to guarantee the WAL batch and MemTable
 // updates are not interleaved with a concurrent triggerFlush rotation.
 func (db *DB) ApplyTxn(txnID, txnSeq uint64, ops []txn.TxnOp) error {
-	ctx := context.Background()
 	if db.tracer != nil {
-		var span trace.Span
-		ctx, span = db.tracer.Start(ctx, tracing.SpanKindTxnCommit,
+		_, span := db.tracer.Start(context.Background(), tracing.SpanKindTxnCommit,
 			attribute.Int("ops", len(ops)),
 		)
 		defer tracing.End(span, nil)
@@ -541,9 +521,8 @@ func (db *DB) ApplyTxn(txnID, txnSeq uint64, ops []txn.TxnOp) error {
 
 	if db.memtable.IsFull() {
 		db.writeMu.Unlock()
-		err := db.triggerFlush()
+		db.triggerFlush()
 		db.writeMu.Lock()
-		return err
 	}
 	return nil
 }
@@ -552,10 +531,8 @@ func (db *DB) ApplyTxn(txnID, txnSeq uint64, ops []txn.TxnOp) error {
 
 // Put writes key=value into the DB.
 func (db *DB) Put(key, value []byte) error {
-	ctx := context.Background()
 	if db.tracer != nil {
-		var span trace.Span
-		ctx, span = db.tracer.Start(ctx, tracing.SpanKindPut,
+		_, span := db.tracer.Start(context.Background(), tracing.SpanKindPut,
 			attribute.Int("key.len", len(key)),
 			attribute.Int("value.len", len(value)),
 		)
@@ -597,17 +574,15 @@ func (db *DB) Put(key, value []byte) error {
 		db.leader.Ship(replication.WALRecord{Kind: wal.KindPut, SeqNum: seq, Key: key, Value: value})
 	}
 	if db.memtable.IsFull() {
-		return db.triggerFlush()
+		db.triggerFlush()
 	}
 	return nil
 }
 
 // Delete marks key as deleted.
 func (db *DB) Delete(key []byte) error {
-	ctx := context.Background()
 	if db.tracer != nil {
-		var span trace.Span
-		ctx, span = db.tracer.Start(ctx, tracing.SpanKindDelete,
+		_, span := db.tracer.Start(context.Background(), tracing.SpanKindDelete,
 			attribute.Int("key.len", len(key)),
 		)
 		defer tracing.End(span, nil)
@@ -647,17 +622,15 @@ func (db *DB) Delete(key []byte) error {
 		db.leader.Ship(replication.WALRecord{Kind: wal.KindDelete, SeqNum: seq, Key: key})
 	}
 	if db.memtable.IsFull() {
-		return db.triggerFlush()
+		db.triggerFlush()
 	}
 	return nil
 }
 
 // Get returns the value for key at the current view.
 func (db *DB) Get(key []byte) ([]byte, error) {
-	ctx := context.Background()
 	if db.tracer != nil {
-		var span trace.Span
-		ctx, span = db.tracer.Start(ctx, tracing.SpanKindGet,
+		_, span := db.tracer.Start(context.Background(), tracing.SpanKindGet,
 			attribute.Int("key.len", len(key)),
 		)
 		defer tracing.End(span, nil)
@@ -1042,6 +1015,28 @@ func (db *DB) BackupFiles() []string {
 // FlushSync flushes the active MemTable to an SSTable and blocks until the
 // SSTable is fully written to disk.  Used by the backup path to ensure all
 // in-memory data is on disk before files are copied.
+// applyDefaults sets zero-valued config fields to their defaults.
+func (cfg *Config) applyDefaults() {
+	if cfg.MemTableSize == 0 {
+		cfg.MemTableSize = 64 * 1024 * 1024
+	}
+	if cfg.L0CompactThreshold == 0 {
+		cfg.L0CompactThreshold = 4
+	}
+	if cfg.L1SizeThreshold == 0 {
+		cfg.L1SizeThreshold = 256 * 1024 * 1024
+	}
+	if cfg.BloomFPRTarget <= 0 {
+		cfg.BloomFPRTarget = 0.01
+	}
+	if cfg.BloomFPRMin <= 0 {
+		cfg.BloomFPRMin = 0.001
+	}
+	if cfg.BloomFPRMax <= 0 {
+		cfg.BloomFPRMax = 0.05
+	}
+}
+
 func (db *DB) FlushSync() error {
 	db.writeMu.Lock()
 	if db.memtable.Count() == 0 {
@@ -1062,7 +1057,7 @@ func (db *DB) Backup(destDir string) (*backup.Manifest, error) {
 
 // ── Flush: MemTable → SSTable ─────────────────────────────────────────────────
 
-func (db *DB) triggerFlush() error {
+func (db *DB) triggerFlush() {
 	db.writeMu.Lock()
 	db.imm = db.memtable
 	db.memtable = memtable.New(db.cfg.MemTableSize)
@@ -1078,15 +1073,12 @@ func (db *DB) triggerFlush() error {
 		default:
 		}
 	}()
-	return nil
 }
 
 func (db *DB) flushImmutable() error {
-	ctx := context.Background()
 	if db.tracer != nil {
-		var span trace.Span
+		_, span := db.tracer.Start(context.Background(), tracing.SpanKindFlush)
 		start := time.Now()
-		ctx, span = db.tracer.Start(ctx, tracing.SpanKindFlush)
 		defer func() {
 			span.SetAttributes(attribute.Int64("duration_ms", time.Since(start).Milliseconds()))
 			tracing.End(span, nil)
@@ -1394,27 +1386,27 @@ func (db *DB) L1MergeCount() uint64 { return db.compactor.L1MergeCount() }
 // Uses the backup mechanism to capture an on-disk snapshot, then stores it
 // as a serialized snapshot that Raft can use for log compaction.
 func (db *DB) Snapshot() (raft.FSMSnapshot, error) {
-	return &dbSnapshot{seq: db.seq.Load()}, nil
+	return &dbSnapshot{Seq: db.seq.Load()}, nil
 }
 
 // Restore restores database state from a Raft snapshot.
 func (db *DB) Restore(rc io.ReadCloser) error {
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	var snap dbSnapshot
 	if err := json.NewDecoder(rc).Decode(&snap); err != nil {
 		return err
 	}
-	db.seq.Store(snap.seq)
+	db.seq.Store(snap.Seq)
 	return nil
 }
 
 // dbSnapshot implements raft.FSMSnapshot for Raft log compaction.
 type dbSnapshot struct {
-	seq uint64
+	Seq uint64
 }
 
 func (s *dbSnapshot) Persist(sink raft.SnapshotSink) error {
-	defer sink.Close()
+	defer func() { _ = sink.Close() }()
 	return json.NewEncoder(sink).Encode(s)
 }
 

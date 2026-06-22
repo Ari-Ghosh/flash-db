@@ -136,12 +136,8 @@ func (t *Tracer) Start(ctx context.Context, name string, attrs ...attribute.KeyV
 	return t.tracer.Start(ctx, name)
 }
 
-// End ends a span. If err is non-nil, it records the error on the span.
-func End(span trace.Span, err *error) {
-	if err != nil && *err != nil {
-		span.RecordError(*err)
-		span.SetAttributes(attribute.Bool("error", true))
-	}
+// End ends a span. If recording an error, use RecordError on the span directly.
+func End(span trace.Span, _ error) {
 	span.End()
 }
 

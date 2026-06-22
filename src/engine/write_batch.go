@@ -116,9 +116,8 @@ func (wb *WriteBatch) Commit() error {
 
 	if wb.db.memtable.IsFull() {
 		wb.db.writeMu.Unlock()
-		err := wb.db.triggerFlush()
+		wb.db.triggerFlush()
 		wb.db.writeMu.Lock()
-		return err
 	}
 	return nil
 }

@@ -48,7 +48,7 @@ func TestCLI_BackupRestore(t *testing.T) {
 	if len(manifest.Files) == 0 {
 		t.Fatal("expected at least 1 backup file")
 	}
-	db.Close()
+	_ = db.Close()
 
 	if err := backup.Restore(dstDir, restoreDir); err != nil {
 		t.Fatal(err)

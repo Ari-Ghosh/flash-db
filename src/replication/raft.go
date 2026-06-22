@@ -215,7 +215,7 @@ func (s *raftLogStore) open() error {
 	if s.file != nil {
 		return nil
 	}
-	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_RDWR, 0o640)
+	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}
@@ -314,7 +314,7 @@ func (s *raftLogStore) StoreLogs(logs []*raft.Log) error {
 	return nil
 }
 
-func (s *raftLogStore) DeleteRange(min, max uint64) error {
+func (s *raftLogStore) DeleteRange(minIdx, maxIdx uint64) error {
 	return nil // append-only; compaction handled by snapshot
 }
 
@@ -328,7 +328,7 @@ type raftStableStore struct {
 
 func newRaftStableStore(path string) *raftStableStore {
 	s := &raftStableStore{path: path, kv: make(map[string]string)}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path comes from trusted config
 	if err == nil {
 		_ = json.Unmarshal(data, &s.kv)
 	}
