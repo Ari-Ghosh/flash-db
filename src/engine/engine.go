@@ -114,6 +114,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hashicorp/raft"
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/Ari-Ghosh/flash-db/src/backend"
 	"github.com/Ari-Ghosh/flash-db/src/backup"
 	"github.com/Ari-Ghosh/flash-db/src/bloom"
@@ -127,8 +130,6 @@ import (
 	"github.com/Ari-Ghosh/flash-db/src/txn"
 	types "github.com/Ari-Ghosh/flash-db/src/types"
 	"github.com/Ari-Ghosh/flash-db/src/wal"
-	"github.com/hashicorp/raft"
-	"go.opentelemetry.io/otel/attribute"
 )
 
 // Config holds all engine tuning parameters.
