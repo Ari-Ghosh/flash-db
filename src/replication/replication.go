@@ -310,6 +310,8 @@ type Follower struct {
 	wg        sync.WaitGroup
 	lastSeq   atomic.Uint64
 	connected atomic.Bool
+	connMu    sync.Mutex
+	conn      net.Conn
 }
 
 // NewFollower creates a Follower node.
@@ -334,8 +336,13 @@ func (f *Follower) Start() {
 	go f.loop()
 }
 
-// Stop shuts down the follower.
+// Stop shuts down the follower, interrupting any in-flight read.
 func (f *Follower) Stop() {
+	f.connMu.Lock()
+	if f.conn != nil {
+		_ = f.conn.Close()
+	}
+	f.connMu.Unlock()
 	close(f.stopCh)
 	f.wg.Wait()
 }
@@ -372,6 +379,15 @@ func (f *Follower) runOnce() error {
 		return fmt.Errorf("dial %s: %w", f.cfg.LeaderAddr, err)
 	}
 	defer func() { _ = conn.Close() }()
+
+	f.connMu.Lock()
+	f.conn = conn
+	f.connMu.Unlock()
+	defer func() {
+		f.connMu.Lock()
+		f.conn = nil
+		f.connMu.Unlock()
+	}()
 
 	if err := f.authenticateAndHandshake(conn); err != nil {
 		return err
