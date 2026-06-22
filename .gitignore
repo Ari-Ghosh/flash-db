@@ -18,8 +18,8 @@
 # Dependency directories (remove the comment below to include it)
 # vendor/
 
-# Go workspace file
-flashdb
+# Go workspace file (root-level binary only, not cmd/flashdb/)
+/flashdb
 
 ### IDE ###
 .vscode/
