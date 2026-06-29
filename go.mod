@@ -4,7 +4,7 @@ go 1.25.11
 
 require (
 	github.com/golang/snappy v1.0.0
-	github.com/hashicorp/raft v1.7.2
+	github.com/hashicorp/raft v1.7.3
 	github.com/klauspost/compress v1.18.6
 	github.com/prometheus/client_golang v1.23.2
 	go.opentelemetry.io/otel v1.44.0
