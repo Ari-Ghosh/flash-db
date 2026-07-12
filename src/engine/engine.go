@@ -221,7 +221,7 @@ type DB struct {
 	// Secondary index manager (definitions registered in memory only).
 	idxMgr *indexManager
 
-	walActive *wal.WAL
+	walActive atomic.Pointer[wal.WAL]
 	l0Mu      sync.Mutex
 	l0Files   []string
 
@@ -495,7 +495,7 @@ func (db *DB) ApplyTxn(txnID, txnSeq uint64, ops []txn.TxnOp) error {
 	defer db.writeMu.Unlock()
 
 	// Phase 1: WAL (one fsync for the entire batch).
-	if err := db.walActive.AppendBatch(batch); err != nil {
+	if err := db.walActive.Load().AppendBatch(batch); err != nil {
 		return fmt.Errorf("txn wal batch: %w", err)
 	}
 
@@ -565,7 +565,7 @@ func (db *DB) Put(key, value []byte) error {
 	}
 
 	seq := db.seq.Add(1)
-	if err := db.walActive.AppendPut(seq, key, value); err != nil {
+	if err := db.walActive.Load().AppendPut(seq, key, value); err != nil {
 		return fmt.Errorf("put: wal: %w", err)
 	}
 	if err := db.memtable.Put(key, value, seq); err != nil {
@@ -613,7 +613,7 @@ func (db *DB) Delete(key []byte) error {
 	}
 
 	seq := db.seq.Add(1)
-	if err := db.walActive.AppendDelete(seq, key); err != nil {
+	if err := db.walActive.Load().AppendDelete(seq, key); err != nil {
 		return fmt.Errorf("delete: wal: %w", err)
 	}
 	if err := db.memtable.Delete(key, seq); err != nil {
@@ -1009,7 +1009,7 @@ func (db *DB) BackupFiles() []string {
 	files = append(files, db.l0Files...)
 	db.l0Mu.Unlock()
 	// Active WAL.
-	files = append(files, db.walActive.Path())
+	files = append(files, db.walActive.Load().Path())
 	return files
 }
 
@@ -1174,8 +1174,11 @@ func (db *DB) rotateWAL() {
 		db.log.Error("engine: WAL rotate error", "error", err)
 		return
 	}
-	db.walActive = newWAL
-	go func() { _ = oldWAL.Delete() }()
+	db.walActive.Store(newWAL)
+	go func() {
+		_ = oldWAL.Close()
+		_ = os.Remove(oldWAL.Path())
+	}()
 }
 
 func (db *DB) discoverL0Files() {
@@ -1256,7 +1259,7 @@ func (db *DB) putRaw(key, value []byte) error {
 		return err
 	}
 	seq := db.seq.Add(1)
-	if err := db.walActive.AppendPut(seq, key, value); err != nil {
+	if err := db.walActive.Load().AppendPut(seq, key, value); err != nil {
 		return err
 	}
 	return db.memtable.Put(key, value, seq)
@@ -1306,7 +1309,7 @@ func (db *DB) Close() error {
 				firstErr = err
 			}
 		}
-		if err := db.walActive.Close(); err != nil && firstErr == nil {
+		if err := db.walActive.Load().Close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
 		if err := db.l1Tree.Close(); err != nil && firstErr == nil {
@@ -1377,7 +1380,7 @@ func (db *DB) L0FileCount() int {
 func (db *DB) PutCount() uint64     { return db.putCount.Load() }
 func (db *DB) DeleteCount() uint64  { return db.deleteCount.Load() }
 func (db *DB) GetCount() uint64     { return db.getCount.Load() }
-func (db *DB) WALSyncCount() uint64 { return db.walActive.SyncCount() }
+func (db *DB) WALSyncCount() uint64 { return db.walActive.Load().SyncCount() }
 func (db *DB) L0MergeCount() uint64 { return db.compactor.L0MergeCount() }
 func (db *DB) L1MergeCount() uint64 { return db.compactor.L1MergeCount() }
 

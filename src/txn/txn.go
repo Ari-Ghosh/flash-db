@@ -26,7 +26,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"sync/atomic"
 
 	types "github.com/Ari-Ghosh/flash-db/src/types"
 )
@@ -264,5 +263,4 @@ func cloneBytes(b []byte) []byte {
 	return c
 }
 
-// Ensure atomic is imported (used by callers; kept here for reference).
-var _ = atomic.AddUint64
+
