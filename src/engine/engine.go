@@ -296,8 +296,6 @@ func Open(cfg Config) (*DB, error) {
 		memtable:       memtable.New(cfg.MemTableSize),
 		l1Tree:         l1Tree,
 		l2Tree:         l2Tree,
-	}
-	db.walActive.Store(w)
 		snapTrack:      snapTrack,
 		bloomTelemetry: bt,
 		closeCh:        make(chan struct{}),
@@ -307,6 +305,7 @@ func Open(cfg Config) (*DB, error) {
 		tracer:         tr,
 		log:            log,
 	}
+	db.walActive.Store(w)
 
 	compCfg := compaction.Config{
 		L0Threshold:     cfg.L0CompactThreshold,
@@ -1177,8 +1176,10 @@ func (db *DB) rotateWAL() {
 	}
 	db.walActive.Store(newWAL)
 	go func() {
-		_ = oldWAL.Close()
-		_ = os.Remove(oldWAL.Path())
+		if oldW := oldWAL.Load(); oldW != nil {
+			_ = oldW.Close()
+			_ = os.Remove(oldW.Path())
+		}
 	}()
 }
 
@@ -1659,10 +1660,6 @@ func bubbleUpMax(h iterHeap, i int) {
 		if !greater(h, i, p) {
 			break
 		}
-		h[i], h[p] = h[p], h[i]
-		i = p
-	}
-}
 		h[i], h[p] = h[p], h[i]
 		i = p
 	}
