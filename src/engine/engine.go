@@ -1167,18 +1167,17 @@ func (db *DB) replayWAL(w *wal.WAL) error {
 func (db *DB) rotateWAL() {
 	db.writeMu.Lock()
 	defer db.writeMu.Unlock()
-	oldWAL := db.walActive
 	newPath := filepath.Join(db.cfg.Dir, fmt.Sprintf("wal_%d.log", db.seq.Load()))
 	newWAL, err := wal.OpenWithOptions(newPath, wal.Options{SyncPolicy: db.cfg.WALSyncPolicy})
 	if err != nil {
 		db.log.Error("engine: WAL rotate error", "error", err)
 		return
 	}
-	db.walActive.Store(newWAL)
+	oldWAL := db.walActive.Swap(newWAL)
 	go func() {
-		if oldW := oldWAL.Load(); oldW != nil {
-			_ = oldW.Close()
-			_ = os.Remove(oldW.Path())
+		if oldWAL != nil {
+			_ = oldWAL.Close()
+			_ = os.Remove(oldWAL.Path())
 		}
 	}()
 }
