@@ -1,7 +1,7 @@
 # FlashDB Documentation
 
-**Project Status:** v4.1 — CLI/REPL, OpenTelemetry tracing, Raft consensus for automatic leader election  
-**Last Updated:** June 19, 2026  
+**Project Status:** v4.2 — Streaming compaction, atomic write path, distributed query fan-out  
+**Last Updated:** June 25, 2026  
 **Language:** Go 1.25.11
 
 Welcome to the FlashDB documentation. This guide provides a comprehensive overview of the FlashDB architecture, its components, and how to use it in your applications.
