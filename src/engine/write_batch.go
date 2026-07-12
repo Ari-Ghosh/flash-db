@@ -101,7 +101,7 @@ func (wb *WriteBatch) Commit() error {
 	defer wb.db.writeMu.Unlock()
 
 	// WAL (one fsync for the whole batch).
-	if err := wb.db.walActive.AppendBatch(batch); err != nil {
+	if err := wb.db.walActive.Load().AppendBatch(batch); err != nil {
 		return fmt.Errorf("writebatch wal: %w", err)
 	}
 

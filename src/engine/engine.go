@@ -296,7 +296,8 @@ func Open(cfg Config) (*DB, error) {
 		memtable:       memtable.New(cfg.MemTableSize),
 		l1Tree:         l1Tree,
 		l2Tree:         l2Tree,
-		walActive:      w,
+	}
+	db.walActive.Store(w)
 		snapTrack:      snapTrack,
 		bloomTelemetry: bt,
 		closeCh:        make(chan struct{}),
@@ -1658,6 +1659,10 @@ func bubbleUpMax(h iterHeap, i int) {
 		if !greater(h, i, p) {
 			break
 		}
+		h[i], h[p] = h[p], h[i]
+		i = p
+	}
+}
 		h[i], h[p] = h[p], h[i]
 		i = p
 	}
